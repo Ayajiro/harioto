@@ -1,0 +1,31 @@
+[package]
+name = "harioto"
+version = "0.1.0"
+edition = "2024"
+description = "A terminal radio in Rust: seed it one song, it keeps playing"
+license = "MIT"
+repository = "https://github.com/Ayajiro/harioto"
+readme = "README.md"
+keywords = ["music", "radio", "tui", "youtube", "player"]
+categories = ["command-line-utilities", "multimedia::audio"]
+
+[dependencies]
+anyhow = "1.0.104"
+crossterm = "0.29.0"
+dirs = "7.0.0"
+env_logger = "0.11.11"
+futures-util = "0.3.34"
+log = "0.4.35"
+ratatui = "0.30.2"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "http2", "charset", "query", "stream"] }
+rodio = "0.21.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tempfile = "3.27.0"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "process", "io-util"] }
+unicode-width = "0.2.3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

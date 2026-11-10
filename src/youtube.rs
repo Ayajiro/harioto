@@ -1,0 +1,203 @@
+//! YouTube 音源：透過 yt-dlp 搜尋與解析音訊串流網址。
+//!
+//! 搜尋與解析都不需要申請任何金鑰。
+
+use anyhow::{Result, anyhow};
+use serde::{Deserialize, Serialize};
+use tokio::process::Command;
+
+/// 一筆可播放的曲目。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Video {
+    pub id: String,
+    pub title: String,
+    pub channel: String,
+    pub duration_ms: u32,
+}
+
+#[derive(Deserialize)]
+struct Entry {
+    id: Option<String>,
+    title: Option<String>,
+    channel: Option<String>,
+    uploader: Option<String>,
+    duration: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct SearchResult {
+    entries: Option<Vec<Entry>>,
+}
+
+/// 確認 yt-dlp 存在，順便回報版本。
+pub async fn version() -> Result<String> {
+    let output = Command::new("yt-dlp")
+        .arg("--version")
+        .output()
+        .await
+        .map_err(|_| anyhow!("找不到 yt-dlp，請先執行 brew install yt-dlp"))?;
+
+    if !output.status.success() {
+        return Err(anyhow!("yt-dlp 無法執行"));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// yt-dlp 的版本號是發布日期，格式 `YYYY.MM.DD`。算出它距今幾天。
+///
+/// YouTube 會定期更換 JavaScript 挑戰，過舊的 yt-dlp 會靜默失敗，所以值得提醒。
+pub fn version_age_days(version: &str) -> Option<i64> {
+    let mut parts = version.split('.');
+    let year: i64 = parts.next()?.trim().parse().ok()?;
+    let month: u32 = parts.next()?.trim().parse().ok()?;
+    let day: u32 = parts.next()?.trim().parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+
+    let released = days_from_civil(year, month, day);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64
+        / 86_400;
+
+    Some(now - released)
+}
+
+/// 把年月日換算成自 1970-01-01 起算的天數。
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let m = month as i64;
+    let d = day as i64;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// 搜尋曲目。只取清單資訊，不解析串流網址，所以很快。
+pub async fn search(query: &str, limit: usize) -> Result<Vec<Video>> {
+    let output = Command::new("yt-dlp")
+        .args([
+            "--flat-playlist",
+            "--no-warnings",
+            "--ignore-config",
+            "-J",
+            &format!("ytsearch{limit}:{query}"),
+        ])
+        .output()
+        .await
+        .map_err(|_| anyhow!("找不到 yt-dlp，請先執行 brew install yt-dlp"))?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "搜尋失敗：{}",
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .next()
+                .unwrap_or("未知錯誤")
+                .to_string()
+        ));
+    }
+
+    parse_entries(&output.stdout)
+}
+
+/// 取得某首歌的 YouTube Mix，也就是 YouTube 針對這首歌產生的電台。
+///
+/// 回傳的清單會把種子本身排在第一筆，呼叫端自行決定要不要保留。
+pub async fn radio(video_id: &str, limit: usize) -> Result<Vec<Video>> {
+    let url = format!("https://www.youtube.com/watch?v={video_id}&list=RD{video_id}");
+    let output = Command::new("yt-dlp")
+        .args([
+            "--flat-playlist",
+            "--no-warnings",
+            "--ignore-config",
+            "--playlist-end",
+            &limit.to_string(),
+            "-J",
+            &url,
+        ])
+        .output()
+        .await
+        .map_err(|_| anyhow!("找不到 yt-dlp，請先執行 brew install yt-dlp"))?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "取得電台失敗：{}",
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .last()
+                .unwrap_or("未知錯誤")
+                .to_string()
+        ));
+    }
+
+    parse_entries(&output.stdout)
+}
+
+fn parse_entries(stdout: &[u8]) -> Result<Vec<Video>> {
+    let parsed: SearchResult =
+        serde_json::from_slice(stdout).map_err(|e| anyhow!("結果無法解析：{e}"))?;
+
+    Ok(parsed
+        .entries
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|e| {
+            let id = e.id?;
+            Some(Video {
+                id,
+                title: e.title.unwrap_or_else(|| "未知標題".into()),
+                channel: e.channel.or(e.uploader).unwrap_or_else(|| "未知頻道".into()),
+                duration_ms: e.duration.map(|d| (d * 1000.0) as u32).unwrap_or(0),
+            })
+        })
+        .collect())
+}
+
+/// 把音訊下載到指定目錄，回傳實際產生的檔案路徑。
+///
+/// 交給 yt-dlp 下載而不是自己取網址再抓，因為 googlevideo 的網址綁定請求者的標頭，
+/// 換一個用戶端去取會收到 403。
+pub async fn download(video_id: &str, dest_dir: &std::path::Path) -> Result<std::path::PathBuf> {
+    let output = Command::new("yt-dlp")
+        .args([
+            "--no-warnings",
+            "--ignore-config",
+            "--no-part",
+            "--no-playlist",
+            "-f",
+            "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio",
+            "-P",
+        ])
+        .arg(dest_dir)
+        .args(["-o", "%(id)s.%(ext)s"])
+        .arg(format!("https://www.youtube.com/watch?v={video_id}"))
+        .output()
+        .await
+        .map_err(|_| anyhow!("找不到 yt-dlp"))?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "下載失敗：{}",
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .last()
+                .unwrap_or("未知錯誤")
+                .to_string()
+        ));
+    }
+
+    let mut entries = std::fs::read_dir(dest_dir)
+        .map_err(|e| anyhow!("讀取下載目錄失敗：{e}"))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file());
+
+    entries
+        .next()
+        .ok_or_else(|| anyhow!("yt-dlp 沒有產生檔案"))
+}
