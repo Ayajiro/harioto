@@ -1,111 +1,77 @@
 # harioto
 
-**針音**（はりおと）是唱針走在唱片紋路上那層細微的沙沙聲。
+*Harioto* (針音) is the faint hiss of a stylus tracking a record groove.
 
-這是一台跑在終端機裡的電台，用 Rust 寫成。給它一首歌當種子，它就順著 YouTube 的推薦把後面的歌接下去，常駐記憶體約 16 MB，執行檔 3.4 MB。
+A terminal radio written in Rust. Seed it with one song and it keeps playing, following YouTube's mix recommendations. Around 16 MB resident, 3.4 MB binary.
 
-```
-搜尋一首歌 → 按 r → 它開始自己播下去
-```
+## Why this one
 
-## 為什麼還要有一個
+Other terminal YouTube players each pay a price: YTerMusic and youtui use the internal YouTube Music API and need a browser cookie, which ties playback to your account; ytui-music, rs-pug and ytmusic-cli hand playback to an external `mpv` process.
 
-終端機裡的 YouTube 音樂播放器已經有好幾個，各自付出不同的代價：
+harioto pays neither: **no login, no second process**. `yt-dlp` fetches the audio, `rodio` decodes it in-process. The trade is a smaller feature set — no account playlists, no artist/album browsing, just a radio that grows from a single song.
 
-- **YTerMusic**、**youtui** 走 YouTube Music 的內部 API，功能完整，代價是要你從瀏覽器複製 Cookie，等於把聽歌行為綁回自己的帳號。
-- **ytui-music**、**rs-pug**、**ytmusic-cli** 把播放交給外部的 `mpv` 程式，省下解碼工作，代價是多開一個行程、多吃數十 MB 記憶體。
+## Requirements
 
-harioto 兩個代價都不付：**不需要登入，也不開第二個行程**。音訊在同一個行程裡用 `rodio` 解碼，身分從頭到尾不存在。換來的是功能比較少——沒有帳號歌單、沒有歌手專輯瀏覽，就是一台從一首歌長出下一首歌的電台。
+- `yt-dlp` — `brew install yt-dlp`
+- Rust toolchain (built with 1.99.1)
+- macOS or Linux
 
-## 需要什麼
-
-- `yt-dlp`，負責搜尋與下載音訊：`brew install yt-dlp`
-- Rust 工具鏈，開發時使用 1.99.1
-- macOS 或 Linux，音訊透過 `rodio` 輸出
-
-不需要任何帳號、API key 或授權流程。
-
-## 組成
-
-- `yt-dlp` 負責搜尋與取得音訊檔，兩者都不需要申請金鑰。
-- `rodio` 內建的 `symphonia` 負責解碼，支援 m4a、mp3、flac、vorbis、wav。
-- `rodio` 負責音訊輸出。
-- `ratatui` 繪製終端機畫面。
-- 歌單存成本機 JSON，不依賴任何線上服務。
-
-## 執行
+## Run
 
 ```sh
 cargo run --release
 ```
 
-自我檢測（搜尋、下載、解碼、試播五秒，全程不進入終端機畫面）：
-
-```sh
-cargo run --release -- --selftest "關鍵字"
-```
-
-手動清理快取，參數是上限的 MB 數，省略就用預設的 500：
-
-```sh
-harioto --prune 200
-```
-
-環境變數 `HARIOTO_CACHE_DIR` 可以改變快取位置。
-
-## 操作鍵
-
-| 鍵 | 作用 |
+| Command | Effect |
 | --- | --- |
-| `/` | 搜尋 YouTube，Enter 送出，Esc 取消 |
-| `r` | 以播放中的曲目開電台，沒在播就用選取的那首 |
-| `N` | 新增歌單，輸入名稱後按 Enter |
-| `a` | 把右欄選取的曲目加入左欄選取的歌單 |
-| `d` | 從目前開啟的歌單移除選取的曲目 |
-| `Tab` | 在歌單欄與曲目欄之間切換焦點 |
-| `j` `k` 或 方向鍵上下 | 移動選取 |
-| `PageUp` `PageDown` `Home` `End` | 大幅移動選取 |
-| `Enter` | 焦點在歌單欄時展開歌單，在曲目欄時播放該首 |
-| 空白鍵 | 播放與暫停切換 |
-| `n` `b` | 下一首、上一首 |
-| 方向鍵左右 | 倒退與快轉五秒 |
-| `+` `-` | 音量增減 |
-| `s` | 停止播放 |
-| `q` 或 Esc | 離開 |
+| `harioto` | Start the player |
+| `harioto --selftest "query"` | Search, download, decode and play 5 seconds, printing to stdout |
+| `harioto --prune 200` | Trim the audio cache to the given size in MB (default 500) |
 
-## 電台
+`HARIOTO_CACHE_DIR` overrides the cache location.
 
-按 `r` 會以目前播放中的曲目為種子，取回 YouTube 針對這首歌產生的 Mix 清單，右欄換成電台並自動連播。
-順序照 YouTube 的推薦排法，越前面越相關。一次取一百筆，種子本身會被略過。
+## Keys
 
-電台不需要登入，走的是 `list=RD<影片ID>` 這個公開清單。
+| Key | Action |
+| --- | --- |
+| `/` | Search YouTube |
+| `r` | Start a radio from the playing track, or the selected one |
+| `N` | New playlist |
+| `a` | Add the selected track to the selected playlist |
+| `d` | Remove the selected track from the open playlist |
+| `Tab` | Switch focus between playlists and tracks |
+| `j` `k` / arrows | Move the selection |
+| `PageUp` `PageDown` `Home` `End` | Jump through the list |
+| `Enter` | Open a playlist, or play a track |
+| `Space` | Play / pause |
+| `n` `b` | Next / previous |
+| `←` `→` | Seek 5 seconds |
+| `+` `-` | Volume |
+| `s` | Stop |
+| `q` / `Esc` | Quit |
 
-## 運作方式
+## Radio
 
-曲目先完整下載到快取再播放，因此跳轉與重播都即時，同一首再聽不必重新下載。
-播放中會先把清單的下一首抓下來，換曲時不必等待。
+`r` takes the current track as a seed and loads the mix YouTube generates for it (`list=RD<videoID>`), up to 100 tracks in recommendation order. The seed keeps playing; the queue continues from it.
 
-- 音訊快取：`~/Library/Caches/harioto/audio/`（Linux 在 `~/.cache/harioto/audio/`）
-- 歌單：`~/.config/harioto/playlists.json`
-- 日誌：`~/Library/Caches/harioto/harioto.log`
+## Behaviour
 
-## 保護機制
+- **Playback** — tracks download to the cache before playing, so seeking and replays are instant. The next track is prefetched while the current one plays.
+- **Length check** — items with unknown length or longer than 20 minutes ask for a second `Enter` before playing, and are skipped during autoplay. This keeps livestreams and multi-hour compilations out of the queue.
+- **Cache cap** — the audio cache stops at 500 MB, evicting least-recently-played files. Playing a file refreshes its timestamp; deleting a file that is currently playing is harmless.
+- **yt-dlp freshness** — the version string is a release date. Past 60 days, the status bar suggests `brew upgrade yt-dlp`, since YouTube rotates its JavaScript challenge and a stale yt-dlp fails silently.
 
-- **長度檢查**：長度未知或超過二十分鐘的項目，按 Enter 時會先提示理由，再按一次同一首才真的播。搜尋結果裡的長時間直播與數小時合輯因此不會被誤播。自動接續時直接跳過這類項目，連續跳過十首就停止。
-- **快取上限**：音訊快取上限 500 MB，每次下載完成後檢查，超過就從最久沒播的開始刪到低於上限。播過的檔案會更新時間戳，所以常聽的歌不會被清掉。正在播放的檔案即使被刪也不影響，解碼器握著已開啟的描述子。
-- **yt-dlp 版本提醒**：版本號就是發布日期。超過六十天沒更新時，啟動後狀態列會提示執行 `brew upgrade yt-dlp`。YouTube 會定期更換 JavaScript 挑戰，過舊的 yt-dlp 會靜默失敗。
+## Files
 
-## 目前的限制
+- Audio cache — `~/Library/Caches/harioto/audio/` (`~/.cache/harioto/audio/` on Linux)
+- Playlists — `~/.config/harioto/playlists.json`
+- Log — `~/Library/Caches/harioto/harioto.log`
 
-- 第一首要等完整下載，大約數秒，之後靠預抓掩蓋。改成邊下邊播可以消除這段等待。
-- 解碼偏好 m4a，因為 `symphonia` 對 Opus 的支援還不完整。
+## Limitations
 
-## 檔案配置
+- The first track waits for a full download, a few seconds; prefetching hides it afterwards.
+- Decoding prefers m4a, as `symphonia` support for Opus is incomplete.
 
-- `src/youtube.rs` 搜尋與下載
-- `src/cache.rs` 音訊檔快取
-- `src/store.rs` 本機歌單
-- `src/audio.rs` 音訊輸出與播放控制
-- `src/app.rs` 狀態與按鍵處理
-- `src/ui.rs` 畫面繪製
-- `src/main.rs` 進入點、自我檢測、事件迴圈
+## License
+
+MIT
