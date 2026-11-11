@@ -53,7 +53,7 @@ MCP clients can mount it instead, which carries the parameter schemas with the c
 
 Tools: `harioto_search`, `harioto_radio`, `harioto_playlist_list`, `harioto_playlist_show`, `harioto_playlist_create`, `harioto_playlist_add`, `harioto_history`, `harioto_seeds`.
 
-Calls read and write the same files the player uses and never touch a running instance; a running player picks up new playlists the next time it opens one.
+Calls read and write the same files the player uses and never touch a running instance. A running player notices the change within a quarter of a second and refreshes its list, and every edit it makes re-reads the file first, so edits from both sides survive.
 
 ## Keys
 

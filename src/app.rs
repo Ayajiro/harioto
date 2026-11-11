@@ -57,7 +57,7 @@ pub enum Focus {
 #[derive(Clone)]
 pub enum View {
     Search,
-    Playlist(usize),
+    Playlist(String),
 }
 
 pub struct NowPlaying {
@@ -204,12 +204,68 @@ impl App {
         };
         self.track_title = playlist.name.clone();
         self.tracks = playlist.tracks.clone();
-        self.view = View::Playlist(index);
+        self.view = View::Playlist(playlist.name.clone());
         self.playing_index = None;
         self.track_state
             .select(if self.tracks.is_empty() { None } else { Some(0) });
         self.focus = Focus::Tracks;
         self.status = format!("{}：{} 首", self.track_title, self.tracks.len());
+    }
+
+    /// 把右欄的內容換成歌單在檔案裡的現況，選取與播放位置盡量留在原處。
+    fn sync_open_playlist(&mut self) {
+        let View::Playlist(name) = self.view.clone() else {
+            return;
+        };
+        let Some(playlist) = self.library.find(&name) else {
+            // 歌單被別的行程刪掉了，右欄留著目前內容，只改提示。
+            self.status = format!("歌單「{name}」已經不在檔案裡");
+            return;
+        };
+
+        let playing_id = self.now.as_ref().map(|n| n.video.id.clone());
+        let selected_id = self
+            .track_state
+            .selected()
+            .and_then(|i| self.tracks.get(i))
+            .map(|t| t.id.clone());
+
+        self.tracks = playlist.tracks.clone();
+        self.track_title = playlist.name.clone();
+
+        self.playing_index = playing_id
+            .as_ref()
+            .and_then(|id| self.tracks.iter().position(|t| &t.id == id));
+
+        let next_selection = selected_id
+            .as_ref()
+            .and_then(|id| self.tracks.iter().position(|t| &t.id == id))
+            .or(if self.tracks.is_empty() { None } else { Some(0) });
+        self.track_state.select(next_selection);
+        self.pending_confirm = None;
+    }
+
+    /// 檔案被別的行程改過就重讀，左欄立刻反映，開著的歌單也跟著更新。
+    fn refresh_library(&mut self) {
+        if !self.library.reload_if_changed() {
+            return;
+        }
+
+        if self.library.playlists.is_empty() {
+            self.playlist_state.select(None);
+        } else {
+            let index = self
+                .playlist_state
+                .selected()
+                .unwrap_or(0)
+                .min(self.library.playlists.len() - 1);
+            self.playlist_state.select(Some(index));
+        }
+
+        if matches!(self.view, View::Playlist(_)) {
+            self.sync_open_playlist();
+        }
+        log::info!("歌單檔案被外部改動，已重新載入");
     }
 
     // ---------- 歌單編輯 ----------
@@ -224,45 +280,71 @@ impl App {
         let Some(track) = self.tracks.get(track_index).cloned() else {
             return;
         };
-        let Some(playlist) = self.library.playlists.get_mut(playlist_index) else {
+        let Some(name) = self
+            .library
+            .playlists
+            .get(playlist_index)
+            .map(|p| p.name.clone())
+        else {
             return;
         };
-        if playlist.tracks.iter().any(|t| t.id == track.id) {
+
+        let already = self
+            .library
+            .playlists
+            .get(playlist_index)
+            .map(|p| p.tracks.iter().any(|t| t.id == track.id))
+            .unwrap_or(false);
+        if already {
             self.status = format!("「{}」已經在這份歌單裡", track.title);
             return;
         }
-        playlist.tracks.push(track.clone());
-        let name = playlist.name.clone();
-        match self.library.save() {
-            Ok(()) => self.status = format!("已加入「{name}」：{}", track.title),
+
+        let target = name.clone();
+        let video = track.clone();
+        // 先重讀檔案再寫回，命令列或 MCP 期間加進去的曲目不會被蓋掉。
+        let result = self
+            .library
+            .mutate(move |lib| lib.add_track(&target, video).map(|_| ()));
+        match result {
+            Ok(()) => {
+                self.status = format!("已加入「{name}」：{}", track.title);
+                self.sync_open_playlist();
+            }
             Err(e) => self.status = e.to_string(),
         }
     }
 
     fn remove_from_playlist(&mut self) {
-        let View::Playlist(playlist_index) = self.view.clone() else {
+        let View::Playlist(name) = self.view.clone() else {
             self.status = "只有在歌單檢視裡才能移除曲目".into();
             return;
         };
         let Some(track_index) = self.track_state.selected() else {
             return;
         };
-        let Some(playlist) = self.library.playlists.get_mut(playlist_index) else {
+        let Some(track) = self.tracks.get(track_index).cloned() else {
             return;
         };
-        if track_index >= playlist.tracks.len() {
-            return;
+
+        let target = name.clone();
+        let video_id = track.id.clone();
+        let result = self
+            .library
+            .mutate(move |lib| lib.remove_track(&target, &video_id).map(|_| ()));
+        match result {
+            Ok(()) => {
+                self.tracks.remove(track_index);
+                if self.tracks.is_empty() {
+                    self.track_state.select(None);
+                } else {
+                    self.track_state
+                        .select(Some(track_index.min(self.tracks.len() - 1)));
+                }
+                self.status = format!("已移除：{}", track.title);
+            }
+            Err(e) => self.status = e.to_string(),
         }
-        let removed = playlist.tracks.remove(track_index);
-        let _ = self.library.save();
-        self.tracks.remove(track_index);
-        if self.tracks.is_empty() {
-            self.track_state.select(None);
-        } else {
-            self.track_state
-                .select(Some(track_index.min(self.tracks.len() - 1)));
-        }
-        self.status = format!("已移除：{}", removed.title);
     }
 
     fn create_playlist(&mut self) {
@@ -270,12 +352,21 @@ impl App {
         if name.is_empty() {
             return;
         }
-        self.library.create(&name);
-        match self.library.save() {
+        let target = name.clone();
+        let result = self.library.mutate(move |lib| {
+            lib.create(&target);
+            Ok(())
+        });
+        match result {
             Ok(()) => {
                 self.status = format!("已建立歌單「{name}」");
-                let last = self.library.playlists.len().saturating_sub(1);
-                self.playlist_state.select(Some(last));
+                let index = self
+                    .library
+                    .playlists
+                    .iter()
+                    .position(|p| p.name == name)
+                    .unwrap_or_else(|| self.library.playlists.len().saturating_sub(1));
+                self.playlist_state.select(Some(index));
             }
             Err(e) => self.status = e.to_string(),
         }
@@ -457,7 +548,7 @@ impl App {
 
     pub fn handle(&mut self, msg: Msg) {
         match msg {
-            Msg::Tick => {}
+            Msg::Tick => self.refresh_library(),
             Msg::Key(key) => self.handle_key(key),
             Msg::Audio(event) => self.handle_audio(event),
             Msg::Results { title, tracks } => {

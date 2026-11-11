@@ -161,6 +161,9 @@ mod tests {
 
     #[test]
     fn records_and_reads_back_history() {
+        let _guard = crate::store::CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("建立暫存目錄");
         unsafe { std::env::set_var("XDG_CONFIG_HOME", dir.path()) };
 
