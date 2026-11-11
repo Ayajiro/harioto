@@ -1,8 +1,12 @@
 //! harioto：終端機裡的輕量 YouTube 音樂播放器。
 
+mod api;
 mod app;
 mod audio;
 mod cache;
+mod cli;
+mod history;
+mod mcp;
 mod store;
 mod ui;
 mod youtube;
@@ -137,6 +141,12 @@ async fn main() -> Result<()> {
     let log_path = init_logging();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // 子指令（search、radio、playlist、history、seeds、mcp）走命令列路徑，不進入畫面。
+    if let Some(result) = cli::dispatch(&args).await {
+        return result;
+    }
+
     if let Some(pos) = args.iter().position(|a| a == "--prune") {
         let limit_mb: u64 = args
             .get(pos + 1)

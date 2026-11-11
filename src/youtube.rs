@@ -98,7 +98,6 @@ pub async fn search(query: &str, limit: usize) -> Result<Vec<Video>> {
                 .lines()
                 .next()
                 .unwrap_or("未知錯誤")
-                .to_string()
         ));
     }
 
@@ -131,11 +130,78 @@ pub async fn radio(video_id: &str, limit: usize) -> Result<Vec<Video>> {
                 .lines()
                 .last()
                 .unwrap_or("未知錯誤")
-                .to_string()
         ));
     }
 
     parse_entries(&output.stdout)
+}
+
+/// 單一影片的觀看網址。紀錄與對外輸出都用這個形式。
+pub fn watch_url(video_id: &str) -> String {
+    format!("https://www.youtube.com/watch?v={video_id}")
+}
+
+/// 查一支影片的標題、頻道與長度。加入歌單時用得到。
+pub async fn lookup(video_id: &str) -> Result<Video> {
+    let output = Command::new("yt-dlp")
+        .args([
+            "--flat-playlist",
+            "--no-warnings",
+            "--ignore-config",
+            "--no-playlist",
+            "-J",
+            &watch_url(video_id),
+        ])
+        .output()
+        .await
+        .map_err(|_| anyhow!("找不到 yt-dlp，請先執行 brew install yt-dlp"))?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "查詢影片失敗：{}",
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .last()
+                .unwrap_or("未知錯誤")
+        ));
+    }
+
+    let entry: Entry =
+        serde_json::from_slice(&output.stdout).map_err(|e| anyhow!("結果無法解析：{e}"))?;
+    let id = entry.id.unwrap_or_else(|| video_id.to_string());
+    Ok(Video {
+        id,
+        title: entry.title.unwrap_or_else(|| "未知標題".into()),
+        channel: entry
+            .channel
+            .or(entry.uploader)
+            .unwrap_or_else(|| "未知頻道".into()),
+        duration_ms: entry.duration.map(|d| (d * 1000.0) as u32).unwrap_or(0),
+    })
+}
+
+/// 從使用者給的字串取出影片 ID，接受裸 ID、youtu.be 短網址與 watch 網址。
+pub fn extract_id(input: &str) -> Option<String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return None;
+    }
+    if !input.contains('/') && !input.contains('?') && !input.contains('&') {
+        return Some(input.to_string());
+    }
+    if let Some(rest) = input.split("v=").nth(1) {
+        let id: String = rest.chars().take_while(|c| *c != '&').collect();
+        if !id.is_empty() {
+            return Some(id);
+        }
+    }
+    if let Some(rest) = input.rsplit('/').next() {
+        let id: String = rest.chars().take_while(|c| *c != '?').collect();
+        if !id.is_empty() {
+            return Some(id);
+        }
+    }
+    None
 }
 
 fn parse_entries(stdout: &[u8]) -> Result<Vec<Video>> {
@@ -187,7 +253,6 @@ pub async fn download(video_id: &str, dest_dir: &std::path::Path) -> Result<std:
                 .lines()
                 .last()
                 .unwrap_or("未知錯誤")
-                .to_string()
         ));
     }
 

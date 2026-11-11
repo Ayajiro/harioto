@@ -25,10 +25,35 @@ cargo run --release
 | Command | Effect |
 | --- | --- |
 | `harioto` | Start the player |
-| `harioto --selftest "query"` | Search, download, decode and play 5 seconds, printing to stdout |
+| `harioto search <query>` | Search YouTube |
+| `harioto radio <id\|url>` | Build a radio from one song, seed first |
+| `harioto playlist list\|show\|create\|add` | Local playlists |
+| `harioto history` / `harioto seeds` | Recent plays / recent radio seeds, newest first |
+| `harioto mcp` | Run as an MCP server over stdio |
+| `harioto --selftest "query"` | Search, download, decode and play 5 seconds |
 | `harioto --prune 200` | Trim the audio cache to the given size in MB (default 500) |
 
-`HARIOTO_CACHE_DIR` overrides the cache location.
+`--json` prints machine-readable output, `--limit N` caps the result count, `HARIOTO_CACHE_DIR` overrides the cache location.
+
+## For agents
+
+Every subcommand takes `--json`, so any agent that can run a shell command can use harioto:
+
+```sh
+harioto search "cigarettes after sex" --limit 5 --json
+harioto radio sElE_BfQ67s --limit 20 --json
+harioto playlist add "late night" sElE_BfQ67s --json
+```
+
+MCP clients can mount it instead, which carries the parameter schemas with the call:
+
+```json
+{ "mcpServers": { "harioto": { "command": "harioto", "args": ["mcp"] } } }
+```
+
+Tools: `harioto_search`, `harioto_radio`, `harioto_playlist_list`, `harioto_playlist_show`, `harioto_playlist_create`, `harioto_playlist_add`, `harioto_history`, `harioto_seeds`.
+
+Calls read and write the same files the player uses and never touch a running instance; a running player picks up new playlists the next time it opens one.
 
 ## Keys
 
@@ -65,12 +90,17 @@ cargo run --release
 
 - Audio cache — `~/Library/Caches/harioto/audio/` (`~/.cache/harioto/audio/` on Linux)
 - Playlists — `~/.config/harioto/playlists.json`
+- Play history — `~/.config/harioto/history.jsonl`, last 10,000 entries
+- Radio seeds — `~/.config/harioto/seeds.jsonl`, last 2,000 entries
 - Log — `~/Library/Caches/harioto/harioto.log`
+
+History and seeds hold links and titles only — video id, URL, title, channel, timestamp. No audio, no identifiers beyond the public video id.
 
 ## Limitations
 
 - The first track waits for a full download, a few seconds; prefetching hides it afterwards.
 - Decoding prefers m4a, as `symphonia` support for Opus is incomplete.
+- Media keys are not wired up: on macOS they reach an app only through `MPRemoteCommandCenter`, which needs an initialized `NSApplication` and its main run loop alongside the terminal UI.
 
 ## License
 

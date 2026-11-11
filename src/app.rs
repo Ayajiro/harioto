@@ -182,17 +182,13 @@ impl App {
         let title = format!("電台：{}", seed.title);
         self.status = format!("正在建立電台：{}…", seed.title);
         tokio::spawn(async move {
-            let msg = match youtube::radio(&seed.id, RADIO_LIMIT).await {
-                Ok(mut tracks) => {
-                    // 種子固定排在第一位，後面才是電台推薦。
-                    tracks.retain(|t| t.id != seed.id);
-                    tracks.insert(0, seed);
-                    Msg::Radio {
-                        title,
-                        tracks,
-                        continue_current,
-                    }
-                }
+            // 種子固定排在第一位、並寫進種子紀錄，都在 api 層處理。
+            let msg = match crate::api::radio_with_seed(&seed, RADIO_LIMIT).await {
+                Ok(tracks) => Msg::Radio {
+                    title,
+                    tracks,
+                    continue_current,
+                },
                 Err(e) => Msg::Error(e.to_string()),
             };
             let _ = tx.send(msg);
@@ -306,13 +302,12 @@ impl App {
         let Some(video) = self.tracks.get(index).cloned() else {
             return;
         };
-        if let Some(reason) = Self::too_long_reason(&video) {
-            if self.pending_confirm != Some(index) {
+        if let Some(reason) = Self::too_long_reason(&video)
+            && self.pending_confirm != Some(index) {
                 self.pending_confirm = Some(index);
                 self.status = format!("{reason}。再按一次 Enter 確認播放。");
                 return;
             }
-        }
         self.pending_confirm = None;
         self.play_index(index);
     }
@@ -323,6 +318,7 @@ impl App {
         };
         self.playing_index = Some(index);
         self.status = format!("緩衝中：{}", video.title);
+        crate::history::record(crate::history::Kind::History, &video);
         self.now = Some(NowPlaying {
             video: video.clone(),
             position_ms: 0,
@@ -383,7 +379,7 @@ impl App {
             }
             skipped += 1;
             if skipped >= MAX_AUTO_SKIP {
-                self.status = format!("連續 {skipped} 首都過長，已停止自動接續").into();
+                self.status = format!("連續 {skipped} 首都過長，已停止自動接續");
                 return;
             }
         }

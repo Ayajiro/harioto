@@ -17,7 +17,7 @@ pub struct Library {
     pub playlists: Vec<Playlist>,
 }
 
-fn config_dir() -> PathBuf {
+pub fn config_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
         let xdg = xdg.trim();
         if !xdg.is_empty() {
@@ -50,6 +50,24 @@ impl Library {
         let text = serde_json::to_string_pretty(self).map_err(|e| anyhow!("序列化失敗：{e}"))?;
         std::fs::write(&path, text).map_err(|e| anyhow!("寫入歌單失敗：{e}"))?;
         Ok(())
+    }
+
+    /// 找一份歌單，名稱需完全相同。
+    pub fn find(&self, name: &str) -> Option<&Playlist> {
+        self.playlists.iter().find(|p| p.name == name)
+    }
+
+    /// 把一首歌加進歌單，重複的曲目會略過。回傳加入後的曲目數。
+    pub fn add_track(&mut self, name: &str, video: Video) -> Result<usize> {
+        let playlist = self
+            .playlists
+            .iter_mut()
+            .find(|p| p.name == name)
+            .ok_or_else(|| anyhow!("找不到歌單：{name}"))?;
+        if !playlist.tracks.iter().any(|t| t.id == video.id) {
+            playlist.tracks.push(video);
+        }
+        Ok(playlist.tracks.len())
     }
 
     pub fn create(&mut self, name: &str) {
