@@ -16,11 +16,19 @@ harioto pays neither: **no login, no second process**. `yt-dlp` fetches the audi
 - Rust toolchain (built with 1.99.1)
 - macOS or Linux
 
-## Run
+## Install
+
+```sh
+cargo install harioto
+```
+
+Or build from source:
 
 ```sh
 cargo run --release
 ```
+
+## Run
 
 | Command | Effect |
 | --- | --- |
@@ -54,7 +62,7 @@ MCP clients can mount it instead, which carries the parameter schemas with the c
 
 Tools: `harioto_search`, `harioto_radio`, `harioto_playlist_list`, `harioto_playlist_show`, `harioto_playlist_create`, `harioto_playlist_add`, `harioto_history`, `harioto_seeds`.
 
-Calls read and write the same files the player uses and never touch a running instance. A running player notices the change within a quarter of a second and refreshes its list, and every edit it makes re-reads the file first, so edits from both sides survive.
+Calls read and write the same files the player uses and never touch a running instance. A running player notices the change within a quarter of a second and refreshes its list, and every edit it makes re-reads the file first, so edits from both sides survive. To drive a player that is already running — start a radio, skip, pause — use `harioto ctl`, described under [Remote control](#remote-control).
 
 ## Keys
 
