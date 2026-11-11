@@ -19,9 +19,19 @@ harioto — 終端機裡的電台
   harioto playlist add <名稱> <影片...>      加入歌單，歌單不存在就先建立
   harioto history [--limit N]               播放紀錄，最新在前
   harioto seeds [--limit N]                 電台種子紀錄，最新在前
+  harioto ctl <指令> [對象]                 控制正在執行中的播放器
   harioto mcp                               以 MCP 伺服器執行，供 AI 客戶端呼叫
   harioto --selftest <關鍵字>                搜尋、下載、解碼、試播五秒
   harioto --prune [MB]                      把音訊快取修剪到指定上限
+
+控制指令：
+  harioto ctl status                        目前播放狀態
+  harioto ctl play <ID或關鍵字>              立刻播這一首
+  harioto ctl radio <ID或關鍵字>             以這首為種子開電台並開始播
+  harioto ctl queue <ID或關鍵字>             排進目前清單的後面
+  harioto ctl pause | resume | toggle       暫停、繼續、切換
+  harioto ctl next | prev | stop            下一首、上一首、停止
+  harioto ctl volume <0-100>                音量
 
 選項：
   --json     以 JSON 輸出，給程式讀
@@ -144,11 +154,79 @@ pub async fn dispatch(args: &[String]) -> Option<Result<()>> {
             print_entries(&api::seeds(limit_of(&rest, 50)), json);
             Ok(())
         }
+        "ctl" => ctl(&ops, &rest, json).await,
         "mcp" => crate::mcp::serve().await,
         _ => return None,
     };
 
     Some(result)
+}
+
+async fn ctl(ops: &[String], rest: &[String], json: bool) -> Result<()> {
+    let Some(command) = ops.first().cloned() else {
+        return fail("用法：harioto ctl <status|play|radio|queue|pause|resume|toggle|next|prev|stop|volume>".into(), json);
+    };
+    let target = ops[1..].join(" ");
+
+    let mut payload = serde_json::json!({ "command": command });
+    if command == "volume" {
+        let level: u64 = target.trim().parse().unwrap_or(50);
+        payload["level"] = serde_json::Value::from(level);
+    } else if !target.is_empty() {
+        payload["target"] = serde_json::Value::from(target);
+    }
+    let _ = rest;
+
+    let answer = match crate::control::request(payload).await {
+        Ok(answer) => answer,
+        Err(e) => return fail(e.to_string(), json),
+    };
+
+    if let Some(message) = answer.get("error").and_then(|v| v.as_str()) {
+        return fail(message.to_string(), json);
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&answer).unwrap_or_default());
+        return Ok(());
+    }
+
+    match answer.get("playing") {
+        Some(playing) if !playing.is_null() => {
+            let field = |key: &str| playing.get(key).and_then(|v| v.as_str()).unwrap_or("");
+            let position = playing
+                .get("position_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let duration = playing
+                .get("duration_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let state = if playing.get("paused").and_then(|v| v.as_bool()) == Some(true) {
+                "暫停"
+            } else {
+                "播放中"
+            };
+            println!(
+                "{state} {} / {} | {} | {}",
+                crate::app::format_duration(position),
+                crate::app::format_duration(duration),
+                field("channel"),
+                field("title")
+            );
+        }
+        _ => println!("目前沒有在播放"),
+    }
+    if let Some(note) = answer.get("note").and_then(|v| v.as_str()) {
+        println!("{note}");
+    }
+    println!(
+        "清單：{}（{} 首）｜音量 {}%",
+        answer.get("list").and_then(|v| v.as_str()).unwrap_or(""),
+        answer.get("queue_len").and_then(|v| v.as_u64()).unwrap_or(0),
+        answer.get("volume").and_then(|v| v.as_u64()).unwrap_or(0)
+    );
+    Ok(())
 }
 
 async fn playlist(ops: &[String], json: bool) -> Result<()> {

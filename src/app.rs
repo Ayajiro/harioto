@@ -36,6 +36,11 @@ pub enum Msg {
         continue_current: bool,
     },
     Ready { video_id: String, path: PathBuf },
+    /// 外部程式透過控制通道送進來的指令，處理完要回覆。
+    Control {
+        control: crate::control::Control,
+        reply: tokio::sync::oneshot::Sender<serde_json::Value>,
+    },
     Error(String),
     Tick,
 }
@@ -210,6 +215,137 @@ impl App {
             .select(if self.tracks.is_empty() { None } else { Some(0) });
         self.focus = Focus::Tracks;
         self.status = format!("{}：{} 首", self.track_title, self.tracks.len());
+    }
+
+    // ---------- 控制通道 ----------
+
+    /// 目前狀態，回給控制通道的呼叫端。
+    pub fn status_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "playing": self.now.as_ref().map(|n| serde_json::json!({
+                "id": n.video.id,
+                "url": crate::youtube::watch_url(&n.video.id),
+                "title": n.video.title,
+                "channel": n.video.channel,
+                "duration_ms": n.video.duration_ms,
+                "position_ms": n.position_ms(),
+                "paused": n.paused,
+                "buffering": n.buffering,
+            })),
+            "list": self.track_title,
+            "queue_len": self.tracks.len(),
+            "index": self.playing_index,
+            "volume": self.volume_percent(),
+        })
+    }
+
+    /// 擋掉長度未知或過長的項目，回傳留下來的清單與被擋掉的數量。
+    fn playable_only(tracks: Vec<Video>) -> (Vec<Video>, usize) {
+        let total = tracks.len();
+        let kept: Vec<Video> = tracks
+            .into_iter()
+            .filter(|v| Self::too_long_reason(v).is_none())
+            .collect();
+        let dropped = total - kept.len();
+        (kept, dropped)
+    }
+
+    fn control(&mut self, control: crate::control::Control) -> serde_json::Value {
+        use crate::control::Control;
+
+        // 緩衝中的曲目不接受暫停與繼續，要讓呼叫端知道指令沒有生效。
+        let buffering = self.now.as_ref().is_some_and(|n| n.buffering);
+        let mut note: Option<String> = None;
+
+        let action = match control {
+            Control::Status => return self.status_json(),
+            Control::Toggle | Control::Pause | Control::Resume if buffering => {
+                note = Some("曲目還在緩衝，暫停與繼續這時不會生效".into());
+                "buffering"
+            }
+            Control::Toggle => {
+                self.toggle_pause();
+                "toggle"
+            }
+            Control::Pause => {
+                if self.now.as_ref().is_some_and(|n| !n.paused) {
+                    self.toggle_pause();
+                }
+                "pause"
+            }
+            Control::Resume => {
+                if self.now.as_ref().is_some_and(|n| n.paused) {
+                    self.toggle_pause();
+                }
+                "resume"
+            }
+            Control::Next => {
+                self.play_offset(1);
+                "next"
+            }
+            Control::Prev => {
+                self.play_offset(-1);
+                "prev"
+            }
+            Control::Stop => {
+                self.audio.stop();
+                self.now = None;
+                self.status = "已停止（來自控制通道）".into();
+                "stop"
+            }
+            Control::Volume(level) => {
+                self.audio.set_volume(level as f32 / 100.0);
+                self.status = format!("音量 {level}%（來自控制通道）");
+                "volume"
+            }
+            Control::Replace {
+                title,
+                tracks,
+                start,
+            } => {
+                let (tracks, dropped) = Self::playable_only(tracks);
+                if tracks.is_empty() {
+                    return serde_json::json!({ "error": "清單裡沒有可播的曲目" });
+                }
+                self.track_title = title;
+                self.tracks = tracks;
+                self.view = View::Search;
+                self.focus = Focus::Tracks;
+                self.pending_confirm = None;
+                let start = start.min(self.tracks.len() - 1);
+                self.track_state.select(Some(start));
+                self.play_index(start);
+                self.status = if dropped > 0 {
+                    format!("{}（略過 {dropped} 首過長項目）", self.track_title)
+                } else {
+                    self.track_title.clone()
+                };
+                "replace"
+            }
+            Control::Queue(tracks) => {
+                let (tracks, dropped) = Self::playable_only(tracks);
+                if tracks.is_empty() {
+                    return serde_json::json!({ "error": "沒有可加入的曲目" });
+                }
+                let added = tracks.len();
+                self.tracks.extend(tracks);
+                self.status = if dropped > 0 {
+                    format!("已排入 {added} 首（略過 {dropped} 首過長項目）")
+                } else {
+                    format!("已排入 {added} 首")
+                };
+                "queue"
+            }
+        };
+
+        let mut answer = self.status_json();
+        if let Some(object) = answer.as_object_mut() {
+            object.insert("action".into(), serde_json::Value::from(action));
+            if let Some(note) = note {
+                object.insert("note".into(), serde_json::Value::from(note));
+            }
+        }
+        answer
     }
 
     /// 把右欄的內容換成歌單在檔案裡的現況，選取與播放位置盡量留在原處。
@@ -549,6 +685,10 @@ impl App {
     pub fn handle(&mut self, msg: Msg) {
         match msg {
             Msg::Tick => self.refresh_library(),
+            Msg::Control { control, reply } => {
+                let answer = self.control(control);
+                let _ = reply.send(answer);
+            }
             Msg::Key(key) => self.handle_key(key),
             Msg::Audio(event) => self.handle_audio(event),
             Msg::Results { title, tracks } => {

@@ -29,6 +29,7 @@ cargo run --release
 | `harioto radio <id\|url>` | Build a radio from one song, seed first |
 | `harioto playlist list\|show\|create\|add` | Local playlists |
 | `harioto history` / `harioto seeds` | Recent plays / recent radio seeds, newest first |
+| `harioto ctl <command>` | Control a running player over its socket |
 | `harioto mcp` | Run as an MCP server over stdio |
 | `harioto --selftest "query"` | Search, download, decode and play 5 seconds |
 | `harioto --prune 200` | Trim the audio cache to the given size in MB (default 500) |
@@ -75,6 +76,21 @@ Calls read and write the same files the player uses and never touch a running in
 | `s` | Stop |
 | `q` / `Esc` | Quit |
 
+## Remote control
+
+A running player listens on `~/.config/harioto/ctl.sock`, so another process — a script, an agent, a second terminal — can drive the one that is already playing:
+
+```sh
+harioto ctl radio "tycho japan"   # resolve, start a radio, begin playing
+harioto ctl play <id|query>       # play one track now
+harioto ctl queue <id|query>      # append to the current queue
+harioto ctl pause | resume | toggle | next | prev | stop
+harioto ctl volume 40
+harioto ctl status --json
+```
+
+A target that looks like a video id or a YouTube URL is fetched directly; anything else is searched, and the first result wins. Tracks longer than 20 minutes are dropped before they reach the queue, and the reply says how many were skipped. Every reply carries the current state, so `status` is rarely needed on its own. A second player finds the socket taken and runs without one.
+
 ## Radio
 
 `r` takes the current track as a seed and loads the mix YouTube generates for it (`list=RD<videoID>`), up to 100 tracks in recommendation order. The seed keeps playing; the queue continues from it.
@@ -90,6 +106,7 @@ Calls read and write the same files the player uses and never touch a running in
 
 - Audio cache — `~/Library/Caches/harioto/audio/` (`~/.cache/harioto/audio/` on Linux)
 - Playlists — `~/.config/harioto/playlists.json`
+- Control socket — `~/.config/harioto/ctl.sock`, present only while a player runs
 - Play history — `~/.config/harioto/history.jsonl`, last 10,000 entries
 - Radio seeds — `~/.config/harioto/seeds.jsonl`, last 2,000 entries
 - Log — `~/Library/Caches/harioto/harioto.log`

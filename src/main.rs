@@ -5,6 +5,7 @@ mod app;
 mod audio;
 mod cache;
 mod cli;
+mod control;
 mod history;
 mod mcp;
 mod store;
@@ -185,6 +186,17 @@ async fn main() -> Result<()> {
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Msg>();
 
+    // 控制通道：讓 harioto ctl 與其他程式操作這個播放器。
+    {
+        let control_tx = event_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = control::serve(control_tx).await {
+                log::warn!("控制通道沒有開啟：{e}");
+            }
+        });
+        println!("控制通道：{}", control::socket_path().display());
+    }
+
     let audio_tx = event_tx.clone();
     let (audio_event_tx, mut audio_event_rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
@@ -204,6 +216,7 @@ async fn main() -> Result<()> {
     let terminal = ratatui::init();
     let result = run(terminal, audio, event_tx, &mut event_rx, startup_note).await;
     ratatui::restore();
+    control::cleanup();
     result
 }
 
