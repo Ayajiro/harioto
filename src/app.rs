@@ -585,7 +585,6 @@ impl App {
             return;
         };
         self.playing_index = Some(index);
-        self.status = format!("緩衝中：{}", video.title);
         crate::history::record(crate::history::Kind::History, &video);
         self.now = Some(NowPlaying {
             video: video.clone(),
@@ -830,7 +829,6 @@ impl App {
                     now.buffering = false;
                     now.position_ms = 0;
                     now.marked_at = Instant::now();
-                    self.status = format!("播放：{} — {}", now.video.channel, now.video.title);
                 }
                 self.audio.load(path);
                 self.apply_gain();

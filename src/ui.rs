@@ -211,16 +211,83 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(gauge, rows[1]);
 }
 
+/// 狀態訊息至少保留的寬度，免得提示列把它整個擠掉。
+const STATUS_MIN: usize = 24;
+
+/// 按鍵提示。窄畫面時從列表尾端開始捨棄，排在後面的先丟。
+const HINTS: [&str; 13] = [
+    "/搜尋",
+    "Enter播放",
+    "空白鍵暫停",
+    "n下一首",
+    "q離開",
+    "r電台",
+    "Tab切換",
+    "+-音量",
+    "←→快轉",
+    "g平衡",
+    "a加入",
+    "d移除",
+    "N新歌單",
+];
+
+/// 提示列的顯示順序，和捨棄順序分開，讓畫面上的排列維持穩定。
+const HINT_ORDER: [usize; 13] = [0, 5, 12, 10, 11, 6, 1, 2, 3, 8, 7, 9, 4];
+
+/// 在給定寬度下挑出放得進去的提示，回傳排好的字串。
+fn hint_line(width: usize) -> String {
+    let mut keep = [true; HINTS.len()];
+    loop {
+        let text = compose_hints(&keep);
+        if text.width() <= width {
+            return text;
+        }
+        // 從捨棄順序的尾端往前拿掉一項。
+        let Some(drop) = (0..HINTS.len()).rev().find(|&i| keep[i]) else {
+            return String::new();
+        };
+        keep[drop] = false;
+    }
+}
+
+fn compose_hints(keep: &[bool; HINTS.len()]) -> String {
+    let mut out = String::new();
+    for &index in HINT_ORDER.iter() {
+        if !keep[index] {
+            continue;
+        }
+        out.push_str("  ");
+        out.push_str(HINTS[index]);
+    }
+    out
+}
+
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
-    let hints = "  /搜尋  r電台  N新歌單  a加入  d移除  Tab切換  Enter播放  空白鍵暫停  n下一首  ←→快轉  +-音量  g平衡  q離開";
+    let total = area.width as usize;
+    // 提示先取得空間，但替狀態訊息留一塊，兩邊都不會被完全擠掉。
+    let reserved = if app.status.is_empty() {
+        0
+    } else {
+        STATUS_MIN.min(total / 2)
+    };
+    let hints = hint_line(total.saturating_sub(reserved));
+    let left = total.saturating_sub(hints.width());
+    let status = if app.status.is_empty() || left < 4 {
+        String::new()
+    } else {
+        format!(" {} ", truncate(&app.status, left.saturating_sub(2)))
+    };
+    let gap = total.saturating_sub(status.width() + hints.width());
+
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                format!(" {} ", app.status),
+                status,
                 Style::default()
                     .fg(app.theme.on_accent)
                     .bg(app.theme.accent),
             ),
+            Span::raw(" ".repeat(gap)),
             Span::styled(hints, Style::default().fg(app.theme.dim)),
         ])),
         area,
@@ -249,4 +316,41 @@ fn truncate(text: &str, max: usize) -> String {
     }
     out.push('…');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wide_screens_show_every_hint() {
+        let line = hint_line(400);
+        for hint in HINTS {
+            assert!(line.contains(hint), "少了 {hint}");
+        }
+    }
+
+    #[test]
+    fn narrow_screens_drop_the_least_used_first() {
+        let line = hint_line(30);
+        assert!(line.width() <= 30, "寬度 {} 超過 30", line.width());
+        assert!(line.contains("/搜尋"));
+        assert!(line.contains("Enter播放"));
+        assert!(!line.contains("N新歌單"));
+    }
+
+    #[test]
+    fn a_hintless_width_gives_an_empty_line() {
+        assert_eq!(hint_line(2), "");
+    }
+
+    #[test]
+    fn hints_keep_their_display_order_whatever_is_dropped() {
+        let line = hint_line(60);
+        let search = line.find("/搜尋").expect("搜尋在列");
+        let quit = line.find("q離開");
+        if let Some(quit) = quit {
+            assert!(search < quit, "順序不對：{line}");
+        }
+    }
 }
