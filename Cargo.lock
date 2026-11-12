@@ -912,6 +912,7 @@ dependencies = [
  "ebur128",
  "env_logger",
  "futures-util",
+ "libc",
  "log",
  "ratatui",
  "reqwest",

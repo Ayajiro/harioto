@@ -147,6 +147,8 @@ Roles: `accent`, `on_accent`, `text`, `muted`, `dim`, `selection_bg`, `selection
 { "palette": "atom-one-dark", "colors": { "accent": "ansi:4" } }
 ```
 
+`"palette": "auto"` skips the file and asks the terminal itself. At startup, before the screen is set up, the player sends OSC colour queries — foreground, background and all sixteen ANSI slots — and ends with a DA1 query as a sentinel, so a terminal that ignores colour queries still ends the wait instead of running into the 300 ms budget. A terminal that answers nothing leaves the preset in place, and the log says which happened.
+
 Two formats are read: a Ghostty theme (`palette = 4=#61afef`, `background`, `foreground`, `selection-background`, with or without the `#`), and a JSON file holding `background`, `foreground`, an optional `selection` and sixteen `ansi` entries. A bare name is looked up in `~/.config/harioto/themes/`, `~/.config/herdr-app/themes/`, `~/.config/ghostty/themes/` and Ghostty's bundled themes; anything with a slash is taken as a path.
 
 The palette fills the roles — text from the foreground, muted and dim from ansi 7 and 8, accent from ansi 1, the selected row from the selection colour — and anything named under `colors` still wins. There, a value may also be `ansi:0` through `ansi:15`, `fg`, `bg` or `selection`. A palette that cannot be found or parsed is skipped, with the reason in the log, and the preset stands.

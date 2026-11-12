@@ -11,7 +11,20 @@
 use ratatui::style::Color;
 use ratatui::widgets::BorderType;
 use serde::Deserialize;
-use std::{collections::HashMap, path::PathBuf, time::SystemTime};
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock, time::SystemTime};
+
+/// 啟動時問終端機問到的配色。只問一次，之後重讀主題檔都用這一份。
+static DETECTED: OnceLock<Option<Palette>> = OnceLock::new();
+
+/// 在進入畫面之前呼叫一次：問終端機現在的配色，問不到就記成沒有。
+pub fn detect(palette: Option<Palette>) {
+    let _ = DETECTED.set(palette);
+}
+
+/// 需要 `palette: "auto"` 時用的那一份。
+fn detected() -> Option<Palette> {
+    DETECTED.get().copied().flatten()
+}
 
 /// 內建主題的名稱，給 `--theme` 與設定檔的 `preset` 用。
 pub const PRESETS: [&str; 3] = ["ember", "mono", "light"];
@@ -329,6 +342,13 @@ pub fn load(override_preset: Option<&str>) -> Theme {
 
     // 終端機主題檔先鋪底，個別角色的設定再疊上去。
     let palette = file.palette.as_deref().and_then(|name| {
+        if name.eq_ignore_ascii_case("auto") {
+            let found = detected();
+            if found.is_none() {
+                log::warn!("終端機沒有回答配色查詢，先用內建主題");
+            }
+            return found;
+        }
         let Some(path) = resolve_palette(name) else {
             log::warn!("找不到終端機主題檔：{name}");
             return None;

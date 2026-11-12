@@ -9,6 +9,7 @@ mod control;
 mod history;
 mod loudness;
 mod mcp;
+mod probe;
 mod store;
 mod theme;
 mod ui;
@@ -230,6 +231,19 @@ async fn main() -> Result<()> {
     if let Some(path) = log_path.as_ref() {
         println!("日誌寫在 {}", path.display());
     }
+
+    // 問終端機現在的配色，給主題的 `palette: "auto"` 用。要在進入畫面之前做，
+    // 否則回覆會和按鍵事件混在一起。
+    let detected = probe::query();
+    match detected.as_ref() {
+        Some(palette) => log::info!(
+            "終端機回報配色：前景 {:?}、背景 {:?}",
+            palette.foreground,
+            palette.background
+        ),
+        None => log::info!("終端機沒有回報配色，palette: \"auto\" 會退回內建主題"),
+    }
+    theme::detect(detected);
 
     let terminal = ratatui::init();
     let result = run(
