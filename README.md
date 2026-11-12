@@ -159,6 +159,8 @@ The file is re-read within a quarter of a second of being saved, so a colour edi
 
 The status line, bottom left, carries whatever just happened — a volume change, a theme reload, an error — and after eight seconds falls back to the radio's seed: the channel it came from, and up to three style tags taken from the seed's own YouTube tags, with the ones that merely repeat the title or describe the video dropped. The key hints are laid out from the right and keep their place; a narrow pane drops the least-used ones rather than cutting the line.
 
+That same line is the progress bar. The part already played is shaded behind the text in `gauge_track`, and the clock at the far left gives the exact position, so the now-playing block above it holds words only and the layout is a row shorter in every size.
+
 `r` takes the current track as a seed and loads the mix YouTube generates for it (`list=RD<videoID>`), up to 100 tracks in recommendation order. The seed keeps playing; the queue continues from it.
 
 ## Behaviour
@@ -166,7 +168,7 @@ The status line, bottom left, carries whatever just happened — a volume change
 - **Playback** — tracks download to the cache before playing, so seeking and replays are instant. The next track is prefetched while the current one plays.
 - **Length check** — items with unknown length or longer than 20 minutes ask for a second `Enter` before playing, and are skipped during autoplay. This keeps livestreams and multi-hour compilations out of the queue.
 - **Loudness balance** — every track is measured once to EBU R128 integrated loudness and true peak, then played at a gain that brings it to -14 LUFS, bounded by ±12 dB and by a -1 dBTP ceiling so a lift never clips. Measuring runs on the prefetched file, about 0.7 s of one core for a seven-minute track, and the result is kept so a track is never measured twice. `g` turns the balance off and back on; the now-playing line shows the gain in effect.
-- **Pane size** — a short pane hides the frames and the idle search box so the lists keep their rows. A pane under 70 columns shows one list at a time, with `Tab` moving between the playlists and the queue, and gives the now-playing line three rows so the title, the channel and the volume each get their own.
+- **Pane size** — a short pane hides the frames and the idle search box so the lists keep their rows. A pane under 70 columns shows one list at a time, with `Tab` moving between the playlists and the queue, and splits the now-playing block in two so the title keeps a line of its own.
 - **Cache cap** — the audio cache stops at 500 MB, evicting least-recently-played files. Playing a file refreshes its timestamp; deleting a file that is currently playing is harmless.
 - **yt-dlp freshness** — the version string is a release date. Past 60 days, the status bar suggests `brew upgrade yt-dlp`, since YouTube rotates its JavaScript challenge and a stale yt-dlp fails silently.
 

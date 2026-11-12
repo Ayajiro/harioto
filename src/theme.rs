@@ -64,7 +64,7 @@ pub struct Theme {
     pub dim: Color,
     pub selection_bg: Color,
     pub selection_fg: Color,
-    /// 進度條未播到的部分。
+    /// 狀態列上鋪在播過那一段後面的底色。
     pub gauge_track: Color,
     pub border: Border,
 }
