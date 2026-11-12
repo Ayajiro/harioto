@@ -253,7 +253,7 @@ impl App {
         self.track_state
             .select(if self.tracks.is_empty() { None } else { Some(0) });
         self.focus = Focus::Tracks;
-        self.status = format!("{}：{} 首", self.track_title, self.tracks.len());
+        self.status = format!("清單共 {} 首", self.tracks.len());
     }
 
     // ---------- 控制通道 ----------
@@ -357,9 +357,9 @@ impl App {
                 self.track_state.select(Some(start));
                 self.play_index(start);
                 self.status = if dropped > 0 {
-                    format!("{}（略過 {dropped} 首過長項目）", self.track_title)
+                    format!("清單共 {} 首（略過 {dropped} 首過長項目）", self.tracks.len())
                 } else {
-                    self.track_title.clone()
+                    format!("清單共 {} 首", self.tracks.len())
                 };
                 "replace"
             }
@@ -782,7 +782,7 @@ impl App {
             Msg::Key(key) => self.handle_key(key),
             Msg::Audio(event) => self.handle_audio(event),
             Msg::Results { title, tracks } => {
-                self.status = format!("{title}：{} 筆", tracks.len());
+                self.status = format!("找到 {} 筆", tracks.len());
                 self.track_title = title;
                 self.tracks = tracks;
                 self.view = View::Search;
@@ -800,7 +800,7 @@ impl App {
                     self.status = "電台沒有回傳其他曲目".into();
                     return;
                 }
-                self.status = format!("{title}：接著還有 {} 首", tracks.len() - 1);
+                self.status = format!("電台接著還有 {} 首", tracks.len() - 1);
                 self.track_title = title;
                 self.tracks = tracks;
                 self.view = View::Search;
