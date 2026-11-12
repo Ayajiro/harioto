@@ -67,6 +67,8 @@ pub struct Theme {
     /// 狀態列上鋪在播過那一段後面的底色。
     pub gauge_track: Color,
     pub border: Border,
+    /// 要不要畫專輯縮圖。終端機支援與否是另一回事，這是使用者的意願。
+    pub cover: bool,
 }
 
 impl Default for Theme {
@@ -88,6 +90,7 @@ pub fn preset(name: &str) -> Theme {
             selection_fg: Color::Black,
             gauge_track: Color::DarkGray,
             border: Border::Plain,
+            cover: true,
         },
         "light" => Theme {
             accent: Color::Rgb(176, 48, 48),
@@ -99,6 +102,7 @@ pub fn preset(name: &str) -> Theme {
             selection_fg: Color::Rgb(250, 250, 250),
             gauge_track: Color::Rgb(215, 215, 215),
             border: Border::Rounded,
+            cover: true,
         },
         _ => Theme {
             accent: Color::Rgb(255, 72, 72),
@@ -110,6 +114,7 @@ pub fn preset(name: &str) -> Theme {
             selection_fg: Color::Black,
             gauge_track: Color::Rgb(40, 40, 40),
             border: Border::Rounded,
+            cover: true,
         },
     }
 }
@@ -119,6 +124,8 @@ pub fn preset(name: &str) -> Theme {
 struct File {
     preset: Option<String>,
     border: Option<Border>,
+    /// 關掉就不畫專輯縮圖，也不替它留位置。
+    cover: Option<bool>,
     /// 終端機主題檔：路徑，或放在已知目錄裡的名稱。
     palette: Option<String>,
     #[serde(default)]
@@ -365,6 +372,9 @@ pub fn load(override_preset: Option<&str>) -> Theme {
 
     if let Some(border) = file.border {
         theme.border = border;
+    }
+    if let Some(cover) = file.cover {
+        theme.cover = cover;
     }
     for (role, value) in &file.colors {
         let Some(color) = parse_role_color(value, palette.as_ref()) else {

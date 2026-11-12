@@ -147,6 +147,8 @@ pub struct App {
     theme_mtime: Option<SystemTime>,
     /// 目前這首的縮圖，解開之後放著重複使用。
     cover: Option<cover::Image>,
+    /// 使用者要不要看縮圖。設定檔給初值，按鍵臨時改。
+    pub cover_on: bool,
     /// 畫面替縮圖留的位置，由版面決定，沒有就是這次不畫。
     pub cover_rect: Option<Rect>,
     /// 已經畫上去的是哪一首、畫在哪裡，用來判斷要不要重送。
@@ -161,6 +163,7 @@ impl App {
         theme_preset: Option<String>,
     ) -> Self {
         audio.set_volume(0.5);
+        let theme = crate::theme::load(theme_preset.as_deref());
         let library = Library::load();
         let mut playlist_state = ListState::default();
         if !library.playlists.is_empty() {
@@ -194,13 +197,25 @@ impl App {
             seed: None,
             seed_tags: Vec::new(),
             status_at: Instant::now(),
-            theme: crate::theme::load(theme_preset.as_deref()),
+            cover_on: theme.cover,
+            theme,
             theme_mtime: crate::theme::mtime(),
             theme_preset,
             cover: None,
             cover_rect: None,
             cover_shown: None,
         }
+    }
+
+    /// 開關縮圖。終端機畫不出圖時說明原因，免得按了沒反應。
+    fn toggle_cover(&mut self) {
+        if !cover::supported() {
+            self.set_status("這個終端機沒有回應圖形查詢，畫不出縮圖".into());
+            return;
+        }
+        self.cover_on = !self.cover_on;
+        let state = if self.cover_on { "開" } else { "關" };
+        self.set_status(format!("縮圖：{state}"));
     }
 
     /// 把縮圖畫到版面留好的位置。每畫完一幀呼叫一次，位置或曲目沒變就什麼都不做。
@@ -313,6 +328,8 @@ impl App {
         }
         self.theme_mtime = mtime;
         self.theme = crate::theme::load(self.theme_preset.as_deref());
+        // 設定檔是這件事的主張，重讀之後按鍵的臨時改動就讓位。
+        self.cover_on = self.theme.cover;
         self.status = "已套用新的主題設定".into();
     }
 
@@ -1172,6 +1189,7 @@ impl App {
             KeyCode::Right => self.seek_by(SEEK_STEP_MS as i64),
             KeyCode::Left => self.seek_by(-(SEEK_STEP_MS as i64)),
             KeyCode::Char('g') => self.toggle_normalize(),
+            KeyCode::Char('i') => self.toggle_cover(),
             KeyCode::Char('+') | KeyCode::Char('=') => self.change_volume(true),
             KeyCode::Char('-') => self.change_volume(false),
             KeyCode::Char('r') => self.start_radio(),

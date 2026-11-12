@@ -86,6 +86,7 @@ Calls read and write the same files the player uses and never touch a running in
 | `←` `→` | Seek 5 seconds |
 | `+` `-` | Volume |
 | `g` | Loudness balance on / off |
+| `i` | Cover art on / off |
 | `s` | Stop |
 | `q` / `Esc` | Quit |
 
@@ -133,11 +134,12 @@ Three presets ship with it — `ember` (the default), `mono`, which paints every
 {
   "preset": "mono",
   "border": "none",
+  "cover": false,
   "colors": { "accent": "#7aa2f7", "muted": "244", "text": "terminal" }
 }
 ```
 
-Roles: `accent`, `on_accent`, `text`, `muted`, `dim`, `selection_bg`, `selection_fg`, `gauge_track`. A colour is `#rrggbb`, a 16-colour name such as `bright_blue`, a 256-colour index, or `terminal` to inherit what the terminal already uses. `border` takes `rounded`, `plain`, `thick` or `none`; `none` drops the frames and gives four more rows to the lists, which matters in a split pane.
+Roles: `accent`, `on_accent`, `text`, `muted`, `dim`, `selection_bg`, `selection_fg`, `gauge_track`. A colour is `#rrggbb`, a 16-colour name such as `bright_blue`, a 256-colour index, or `terminal` to inherit what the terminal already uses. `border` takes `rounded`, `plain`, `thick` or `none`; `none` drops the frames and gives four more rows to the lists, which matters in a split pane. `cover` set to `false` keeps the thumbnail off and its rows with the playlists.
 
 ### Borrowing the terminal's own theme
 
@@ -169,7 +171,7 @@ The progress bar shares a row with the volume and the loudness gain, inside the 
 - **Length check** — items with unknown length or longer than 20 minutes ask for a second `Enter` before playing, and are skipped during autoplay. This keeps livestreams and multi-hour compilations out of the queue.
 - **Loudness balance** — every track is measured once to EBU R128 integrated loudness and true peak, then played at a gain that brings it to -14 LUFS, bounded by ±12 dB and by a -1 dBTP ceiling so a lift never clips. Measuring runs on the prefetched file, about 0.7 s of one core for a seven-minute track, and the result is kept so a track is never measured twice. `g` turns the balance off and back on; the now-playing line shows the gain in effect.
 - **Pane size** — a short pane hides the frames and the idle search box so the lists keep their rows. A pane under 70 columns shows one list at a time, with `Tab` moving between the playlists and the queue, and gives the now-playing block a third row so the title, the channel and the progress bar each get their own.
-- **Cover art** — the track's YouTube thumbnail is drawn under the playlists, in a panel the layout only reserves when the terminal answers a kitty graphics query at startup. The image is fetched once per track and kept, decoded in the background, and re-sent only when the track or the panel's position changes. A terminal that stays quiet gets the old layout, with the playlists filling the column.
+- **Cover art** — the track's YouTube thumbnail is drawn under the playlists, in a panel the layout only reserves when the terminal answers a kitty graphics query at startup. The image is fetched once per track and kept, decoded in the background, and re-sent only when the track or the panel's position changes. A terminal that stays quiet gets the old layout, with the playlists filling the column. `i` turns the panel off and back on for the session; `cover: false` in the theme file keeps it off, and re-reading that file takes the key's word back.
 - **Cache cap** — the audio cache stops at 500 MB, evicting least-recently-played files. Playing a file refreshes its timestamp; deleting a file that is currently playing is harmless.
 - **yt-dlp freshness** — the version string is a release date. Past 60 days, the status bar suggests `brew upgrade yt-dlp`, since YouTube rotates its JavaScript challenge and a stale yt-dlp fails silently.
 

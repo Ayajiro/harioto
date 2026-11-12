@@ -168,7 +168,7 @@ fn draw_lists(frame: &mut Frame, app: &mut App, area: Rect, narrow: bool) {
 
     if let Some(column) = columns[0] {
         // 正在播、而且終端機畫得出圖，才替縮圖留位置。
-        let wants_cover = !narrow && app.now.is_some() && crate::cover::supported();
+        let wants_cover = !narrow && app.cover_on && app.now.is_some() && crate::cover::supported();
         let (column, cover) = split_left(column, wants_cover);
         if let Some(cover) = cover {
             let block = panel(&app.theme, "縮圖", false);
@@ -396,7 +396,7 @@ fn draw_progress(frame: &mut Frame, app: &App, area: Rect) {
 const STATUS_MIN: usize = 24;
 
 /// 按鍵提示。窄畫面時從列表尾端開始捨棄，排在後面的先丟。
-const HINTS: [&str; 13] = [
+const HINTS: [&str; 14] = [
     "/搜尋",
     "Enter播放",
     "空白鍵暫停",
@@ -410,10 +410,11 @@ const HINTS: [&str; 13] = [
     "a加入",
     "d移除",
     "N新歌單",
+    "i縮圖",
 ];
 
 /// 提示列的顯示順序，和捨棄順序分開，讓畫面上的排列維持穩定。
-const HINT_ORDER: [usize; 13] = [0, 5, 12, 10, 11, 6, 1, 2, 3, 8, 7, 9, 4];
+const HINT_ORDER: [usize; 14] = [0, 5, 12, 10, 11, 6, 1, 2, 3, 8, 7, 9, 13, 4];
 
 /// 在給定寬度下挑出放得進去的提示，回傳排好的字串。
 fn hint_line(width: usize) -> String {
