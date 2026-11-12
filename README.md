@@ -4,11 +4,15 @@
 
 A terminal radio written in Rust. Seed it with one song and it keeps playing, following YouTube's mix recommendations. Around 16 MB resident, 3.4 MB binary.
 
-## Why this one
+## How it differs
 
-Other terminal YouTube players each pay a price: YTerMusic and youtui use the internal YouTube Music API and need a browser cookie, which ties playback to your account; ytui-music, rs-pug and ytmusic-cli hand playback to an external `mpv` process.
+Terminal YouTube players tend to take one of two routes. YTerMusic and youtui speak the internal YouTube Music API, so a browser cookie buys them your library and your account playlists. ytui-music, rs-pug and ytmusic-cli hand playback to `mpv`, so a mature player comes with them, codecs and all.
 
-harioto pays neither: **no login, no second process**. `yt-dlp` fetches the audio, `rodio` decodes it in-process. The trade is a smaller feature set — no account playlists, no artist/album browsing, just a radio that grows from a single song.
+harioto takes a third route: **no login, no second process**. `yt-dlp` fetches the audio, `rodio` decodes it in-process. That buys less — no account playlists, no artist/album browsing, just a radio that grows from a single song — and needs no setup before the first track plays.
+
+## Playing from YouTube
+
+The audio comes through `yt-dlp` and is decoded locally. What you point it at, and what that is appropriate for, is yours to judge. This is a tool for listening on your own machine; a record worth keeping is worth buying where the payment reaches the people who made it.
 
 ## Requirements
 
@@ -98,6 +102,20 @@ harioto ctl status --json
 ```
 
 A target that looks like a video id or a YouTube URL is fetched directly; anything else is searched, and the first result wins. Tracks longer than 20 minutes are dropped before they reach the queue, and the reply says how many were skipped. Every reply carries the current state, so `status` is rarely needed on its own. A second player finds the socket taken and runs without one.
+
+### Reading `status`
+
+`harioto ctl status --json` answers with the live state of the player:
+
+| Field | Meaning |
+| --- | --- |
+| `playing` | The current track: `id`, `url`, `title`, `channel`, `duration_ms`, `position_ms`, `paused`, `buffering`. `null` when nothing plays |
+| `list` | Name of the queue the player holds, e.g. `電台：aruarian dance` |
+| `index` | Zero-based position of the playing track in that queue |
+| `queue_len` | How many tracks the queue holds |
+| `volume` | 0–100 |
+
+`index` counts the queue the player built when the radio started, and it climbs on its own as tracks end — leave a player running for an hour and it has moved a dozen places. `harioto radio <id>` asks YouTube again and returns a fresh list whose order need not match that queue, so holding the two side by side says nothing about where the player is. `status` is the only answer to that question.
 
 ## Radio
 
