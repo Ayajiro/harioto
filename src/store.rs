@@ -56,12 +56,15 @@ impl Library {
     pub fn save(&mut self) -> Result<()> {
         let path = path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| anyhow!("建立設定目錄失敗：{e}"))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| anyhow!("could not create the config directory: {e}"))?;
         }
-        let text = serde_json::to_string_pretty(self).map_err(|e| anyhow!("序列化失敗：{e}"))?;
+        let text = serde_json::to_string_pretty(self)
+            .map_err(|e| anyhow!("could not serialise the playlists: {e}"))?;
         let temp = path.with_extension("json.tmp");
-        std::fs::write(&temp, text).map_err(|e| anyhow!("寫入歌單失敗：{e}"))?;
-        std::fs::rename(&temp, &path).map_err(|e| anyhow!("更新歌單失敗：{e}"))?;
+        std::fs::write(&temp, text).map_err(|e| anyhow!("could not write the playlists: {e}"))?;
+        std::fs::rename(&temp, &path)
+            .map_err(|e| anyhow!("could not replace the playlist file: {e}"))?;
         self.seen_mtime = file_mtime();
         Ok(())
     }
@@ -103,12 +106,12 @@ impl Library {
             .playlists
             .iter_mut()
             .find(|p| p.name == name)
-            .ok_or_else(|| anyhow!("找不到歌單：{name}"))?;
+            .ok_or_else(|| anyhow!("no playlist called {name}"))?;
         let index = playlist
             .tracks
             .iter()
             .position(|t| t.id == video_id)
-            .ok_or_else(|| anyhow!("這首已經不在歌單裡"))?;
+            .ok_or_else(|| anyhow!("that track is no longer in the playlist"))?;
         Ok(playlist.tracks.remove(index))
     }
 
@@ -123,7 +126,7 @@ impl Library {
             .playlists
             .iter_mut()
             .find(|p| p.name == name)
-            .ok_or_else(|| anyhow!("找不到歌單：{name}"))?;
+            .ok_or_else(|| anyhow!("no playlist called {name}"))?;
         if !playlist.tracks.iter().any(|t| t.id == video.id) {
             playlist.tracks.push(video);
         }

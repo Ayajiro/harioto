@@ -1,6 +1,7 @@
 //! 終端機畫面繪製。
 
 use crate::app::{App, Focus, Mode, format_duration};
+use crate::lang::{t, tf};
 use crate::theme::Theme;
 use ratatui::{
     Frame,
@@ -80,13 +81,18 @@ fn panel<'a>(theme: &Theme, title: &'a str, focused: bool) -> Block<'a> {
 fn draw_input(frame: &mut Frame, app: &App, area: Rect, compact: bool) {
     let editing = app.mode != Mode::Browse;
     let title = match app.mode {
-        Mode::NewPlaylist => "新增歌單",
-        _ => "搜尋",
+        Mode::NewPlaylist => t!("新增歌單", "New playlist", "新規プレイリスト"),
+        _ => t!("搜尋", "Search", "検索"),
     };
     let text = if editing {
         format!("{}▏", app.input)
     } else {
-        "按 / 搜尋 YouTube，按 N 新增歌單".to_string()
+        t!(
+            "按 / 搜尋 YouTube，按 N 新增歌單",
+            "Press / to search YouTube, N for a new playlist",
+            "/ で YouTube を検索、N で新規プレイリスト"
+        )
+        .to_string()
     };
     let theme = &app.theme;
     let style = if editing {
@@ -156,7 +162,11 @@ fn split_left(area: Rect, wanted: bool) -> (Rect, Option<Rect>) {
 /// 單欄時在標題前面標出 Tab 可以換到另一份清單。
 fn list_title(title: &str, narrow: bool) -> String {
     if narrow {
-        format!("Tab 切換 — {title}")
+        tf!(
+            "Tab 切換 — {title}",
+            "Tab switches — {title}",
+            "Tab で切替 — {title}"
+        )
     } else {
         title.to_string()
     }
@@ -171,7 +181,7 @@ fn draw_lists(frame: &mut Frame, app: &mut App, area: Rect, narrow: bool) {
         let wants_cover = !narrow && app.cover_on && app.now.is_some() && crate::cover::supported();
         let (column, cover) = split_left(column, wants_cover);
         if let Some(cover) = cover {
-            let block = panel(&app.theme, "縮圖", false);
+            let block = panel(&app.theme, t!("縮圖", "Cover", "サムネイル"), false);
             app.cover_rect = Some(block.inner(cover));
             frame.render_widget(block, cover);
         }
@@ -193,7 +203,7 @@ fn draw_lists(frame: &mut Frame, app: &mut App, area: Rect, narrow: bool) {
             })
             .collect();
 
-        let title = list_title("歌單", narrow);
+        let title = list_title(t!("歌單", "Playlists", "プレイリスト"), narrow);
         let playlists = List::new(playlist_items)
             .block(panel(&app.theme, &title, app.focus == Focus::Playlists))
             .highlight_style(
@@ -246,7 +256,7 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, compact: bool, nar
     let inner = if compact {
         area
     } else {
-        let block = panel(theme, "播放中", false);
+        let block = panel(theme, t!("播放中", "Now playing", "再生中"), false);
         let inner = block.inner(area);
         frame.render_widget(block, area);
         inner
@@ -268,7 +278,11 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, compact: bool, nar
     let Some(now) = app.now.as_ref() else {
         frame.render_widget(
             Paragraph::new(Span::styled(
-                "尚未播放任何曲目",
+                t!(
+                    "尚未播放任何曲目",
+                    "Nothing playing yet",
+                    "まだ何も再生していません"
+                ),
                 Style::default().fg(theme.dim),
             )),
             rows[0],
@@ -277,21 +291,32 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, compact: bool, nar
     };
 
     let state = if now.buffering {
-        "緩衝"
+        t!("緩衝", "Buffering", "バッファ中")
     } else if now.paused {
-        "暫停"
+        t!("暫停", "Paused", "一時停止")
     } else {
-        "播放"
+        t!("播放", "Playing", "再生")
     };
 
     let balance = if !app.normalize {
-        "平衡關".to_string()
+        t!("平衡關", "balance off", "バランス オフ").to_string()
     } else if app.gain_ready() {
-        format!("平衡 {:+.1} dB", app.gain_db())
+        tf!(
+            "平衡 {:+.1} dB",
+            "balance {:+.1} dB",
+            "バランス {:+.1} dB",
+            app.gain_db()
+        )
     } else {
-        "平衡 量測中".to_string()
+        t!("平衡 量測中", "balance measuring", "バランス 測定中").to_string()
     };
-    let metrics = format!("音量 {}%  {}", app.volume_percent(), balance);
+    let metrics = tf!(
+        "音量 {}%  {}",
+        "volume {}%  {}",
+        "音量 {}%  {}",
+        app.volume_percent(),
+        balance
+    );
 
     let head = format!("{state} ");
     let total = rows[0].width as usize;
@@ -395,51 +420,91 @@ fn draw_progress(frame: &mut Frame, app: &App, area: Rect) {
 /// 狀態訊息至少保留的寬度，免得提示列把它整個擠掉。
 const STATUS_MIN: usize = 24;
 
+/// 提示的數量。三種語言共用同一份順序，所以長度固定。
+const HINT_COUNT: usize = 14;
+
 /// 按鍵提示。窄畫面時從列表尾端開始捨棄，排在後面的先丟。
-const HINTS: [&str; 14] = [
-    "/搜尋",
-    "Enter播放",
-    "空白鍵暫停",
-    "n下一首",
-    "q離開",
-    "r電台",
-    "Tab切換",
-    "+-音量",
-    "←→快轉",
-    "g平衡",
-    "a加入",
-    "d移除",
-    "N新歌單",
-    "i縮圖",
-];
+fn hints() -> [&'static str; HINT_COUNT] {
+    match crate::lang::current() {
+        crate::lang::Lang::Zh => [
+            "/搜尋",
+            "Enter播放",
+            "空白鍵暫停",
+            "n下一首",
+            "q離開",
+            "r電台",
+            "Tab切換",
+            "+-音量",
+            "←→快轉",
+            "g平衡",
+            "a加入",
+            "d移除",
+            "N新歌單",
+            "i縮圖",
+        ],
+        crate::lang::Lang::En => [
+            "/ search",
+            "Enter play",
+            "Space pause",
+            "n next",
+            "q quit",
+            "r radio",
+            "Tab switch",
+            "+- volume",
+            "←→ seek",
+            "g balance",
+            "a add",
+            "d drop",
+            "N playlist",
+            "i cover",
+        ],
+        crate::lang::Lang::Ja => [
+            "/検索",
+            "Enter再生",
+            "Space一時停止",
+            "n次へ",
+            "q終了",
+            "rラジオ",
+            "Tab切替",
+            "+-音量",
+            "←→シーク",
+            "gバランス",
+            "a追加",
+            "d削除",
+            "N新規",
+            "iサムネ",
+        ],
+    }
+}
 
 /// 提示列的顯示順序，和捨棄順序分開，讓畫面上的排列維持穩定。
-const HINT_ORDER: [usize; 14] = [0, 5, 12, 10, 11, 6, 1, 2, 3, 8, 7, 9, 13, 4];
+const HINT_ORDER: [usize; HINT_COUNT] = [0, 5, 12, 10, 11, 6, 1, 2, 3, 8, 7, 9, 13, 4];
 
 /// 在給定寬度下挑出放得進去的提示，回傳排好的字串。
 fn hint_line(width: usize) -> String {
-    let mut keep = [true; HINTS.len()];
+    let hints = hints();
+    let mut keep = [true; HINT_COUNT];
     loop {
-        let text = compose_hints(&keep);
+        let text = compose_hints(&hints, &keep);
         if text.width() <= width {
             return text;
         }
         // 從捨棄順序的尾端往前拿掉一項。
-        let Some(drop) = (0..HINTS.len()).rev().find(|&i| keep[i]) else {
+        let Some(drop) = (0..HINT_COUNT).rev().find(|&i| keep[i]) else {
             return String::new();
         };
         keep[drop] = false;
     }
 }
 
-fn compose_hints(keep: &[bool; HINTS.len()]) -> String {
+fn compose_hints(hints: &[&str; HINT_COUNT], keep: &[bool; HINT_COUNT]) -> String {
     let mut out = String::new();
     for &index in HINT_ORDER.iter() {
         if !keep[index] {
             continue;
         }
         out.push_str("  ");
-        out.push_str(HINTS[index]);
+        out.push_str(hints[index]);
     }
     out
 }
@@ -505,6 +570,13 @@ fn truncate(text: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use ratatui::layout::Rect;
+
+    /// 提示的字會跟著語言變，所以要驗內容的測試先把語言固定住。
+    fn in_chinese() -> std::sync::MutexGuard<'static, ()> {
+        let guard = crate::lang::LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::lang::set(crate::lang::Lang::Zh);
+        guard
+    }
 
     fn rows_at(height: u16, compact: bool, editing: bool) -> [u16; 4] {
         let area = Rect::new(0, 0, 144, height);
@@ -592,19 +664,36 @@ mod tests {
 
     #[test]
     fn wide_screens_show_every_hint() {
+        let _guard = in_chinese();
         let line = hint_line(400);
-        for hint in HINTS {
+        for hint in hints() {
             assert!(line.contains(hint), "少了 {hint}");
         }
     }
 
     #[test]
     fn narrow_screens_drop_the_least_used_first() {
+        let _guard = in_chinese();
         let line = hint_line(30);
         assert!(line.width() <= 30, "寬度 {} 超過 30", line.width());
         assert!(line.contains("/搜尋"));
         assert!(line.contains("Enter播放"));
         assert!(!line.contains("N新歌單"));
+    }
+
+    #[test]
+    fn switching_language_switches_the_hints() {
+        let _guard = in_chinese();
+        let zh = hint_line(400);
+        crate::lang::set(crate::lang::Lang::En);
+        let en = hint_line(400);
+        crate::lang::set(crate::lang::Lang::Ja);
+        let ja = hint_line(400);
+        crate::lang::set(crate::lang::Lang::Zh);
+
+        assert!(zh.contains("/搜尋"));
+        assert!(en.contains("/ search"), "英文提示：{en}");
+        assert!(ja.contains("/検索"), "日文提示：{ja}");
     }
 
     #[test]
@@ -614,6 +703,7 @@ mod tests {
 
     #[test]
     fn hints_keep_their_display_order_whatever_is_dropped() {
+        let _guard = in_chinese();
         let line = hint_line(60);
         let search = line.find("/搜尋").expect("搜尋在列");
         let quit = line.find("q離開");

@@ -36,7 +36,7 @@ cargo run --release
 
 | Command | Effect |
 | --- | --- |
-| `harioto [--theme <name>]` | Start the player |
+| `harioto [--theme <name>] [--lang <name>]` | Start the player |
 | `harioto search <query>` | Search YouTube |
 | `harioto radio <id\|url>` | Build a radio from one song, seed first |
 | `harioto playlist list\|show\|create\|add` | Local playlists |
@@ -47,6 +47,16 @@ cargo run --release
 | `harioto --prune 200` | Trim the audio cache to the given size in MB (default 500) |
 
 `--json` prints machine-readable output, `--limit N` caps the result count, `HARIOTO_CACHE_DIR` overrides the cache location.
+
+## Language
+
+The interface speaks Traditional Chinese, English and Japanese. Everything else — this file, `harioto help`, what `ctl` prints, the MCP tool descriptions, the log — stays in English, since those are read while debugging or by other programs rather than while listening.
+
+Three places decide, in this order: `--lang zh|en|ja`, then `lang` in the theme file, then `LC_ALL`, `LC_MESSAGES` and `LANG`. English if none of them says anything. Editing the theme file switches the running player within a quarter of a second; text already on screen, such as a list title from an earlier search, keeps the words it was built with until it is rebuilt.
+
+```json
+{ "lang": "ja" }
+```
 
 ## For agents
 
@@ -135,6 +145,7 @@ Three presets ship with it — `ember` (the default), `mono`, which paints every
   "preset": "mono",
   "border": "none",
   "cover": false,
+  "lang": "ja",
   "colors": { "accent": "#7aa2f7", "muted": "244", "text": "terminal" }
 }
 ```

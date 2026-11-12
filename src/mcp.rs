@@ -46,7 +46,7 @@ pub async fn serve() -> Result<()> {
                 None => None,
             },
             "ping" => id.map(|id| success(id, json!({}))),
-            _ => id.map(|id| error(id, -32601, format!("不支援的方法：{method}"))),
+            _ => id.map(|id| error(id, -32601, format!("unsupported method: {method}"))),
         };
 
         if let Some(response) = response {
@@ -80,62 +80,62 @@ fn tools() -> Value {
     json!([
         {
             "name": "harioto_search",
-            "description": "搜尋 YouTube 上的歌曲，回傳曲目清單，含影片 ID、標題、頻道與長度。",
+            "description": "Search YouTube for music and return a list of tracks with video id, title, channel and length.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string", "description": "搜尋關鍵字" },
-                    "limit": { "type": "integer", "description": "筆數上限，預設 20，最多 100" },
+                    "query": { "type": "string", "description": "What to search for" },
+                    "limit": { "type": "integer", "description": "How many at most; 20 by default, 100 at the top" },
                 },
                 "required": ["query"],
             },
         },
         {
             "name": "harioto_radio",
-            "description": "以一首歌為種子建立電台，回傳 YouTube 針對它產生的推薦清單，種子排在第一筆。呼叫會寫進種子紀錄。",
+            "description": "Build a radio from one track and return the mix YouTube generates for it, seed first. The call is written to the seed log.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "video": { "type": "string", "description": "影片 ID 或 YouTube 網址" },
-                    "limit": { "type": "integer", "description": "筆數上限，預設 50，最多 100" },
+                    "video": { "type": "string", "description": "A video id or a YouTube url" },
+                    "limit": { "type": "integer", "description": "How many at most; 50 by default, 100 at the top" },
                 },
                 "required": ["video"],
             },
         },
         {
             "name": "harioto_playlist_list",
-            "description": "列出本機歌單與各自的曲目數。",
+            "description": "List the local playlists and how many tracks each holds.",
             "inputSchema": { "type": "object", "properties": {} },
         },
         {
             "name": "harioto_playlist_show",
-            "description": "列出一份歌單裡的所有曲目。",
+            "description": "List every track in one playlist.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "name": { "type": "string", "description": "歌單名稱" } },
+                "properties": { "name": { "type": "string", "description": "The playlist name" } },
                 "required": ["name"],
             },
         },
         {
             "name": "harioto_playlist_create",
-            "description": "建立一份空的本機歌單。名稱已存在時回報錯誤，不覆蓋既有內容。",
+            "description": "Create an empty local playlist. A name already in use is an error; nothing is overwritten.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "name": { "type": "string", "description": "歌單名稱" } },
+                "properties": { "name": { "type": "string", "description": "The playlist name" } },
                 "required": ["name"],
             },
         },
         {
             "name": "harioto_playlist_add",
-            "description": "把一批影片加進歌單，歌單不存在就先建立，重複的曲目會略過。",
+            "description": "Add videos to a playlist, creating it if it is new. Tracks already in it are skipped.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string", "description": "歌單名稱" },
+                    "name": { "type": "string", "description": "The playlist name" },
                     "videos": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "影片 ID 或 YouTube 網址",
+                        "description": "A video id or a YouTube url",
                     },
                 },
                 "required": ["name", "videos"],
@@ -143,18 +143,18 @@ fn tools() -> Value {
         },
         {
             "name": "harioto_history",
-            "description": "讀取播放紀錄，最新的排在最前面。只有連結與標題，沒有音訊。",
+            "description": "Read the play history, newest first. Links and titles only, no audio.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "limit": { "type": "integer", "description": "筆數上限，預設 50" } },
+                "properties": { "limit": { "type": "integer", "description": "How many at most; 50 by default" } },
             },
         },
         {
             "name": "harioto_seeds",
-            "description": "讀取電台種子紀錄，也就是過去用哪些歌開過電台，最新的排在最前面。",
+            "description": "Read the radio seed log: which tracks have been used as seeds, newest first.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "limit": { "type": "integer", "description": "筆數上限，預設 50" } },
+                "properties": { "limit": { "type": "integer", "description": "How many at most; 50 by default" } },
             },
         },
     ])
@@ -216,7 +216,7 @@ async fn call(id: Value, params: Value) -> Value {
         "harioto_history" => Ok(json!({ "entries": api::history(number("limit", 50)) })),
         "harioto_seeds" => Ok(json!({ "entries": api::seeds(number("limit", 50)) })),
         other => {
-            return error(id, -32602, format!("不認得的工具：{other}"));
+            return error(id, -32602, format!("unknown tool: {other}"));
         }
     };
 

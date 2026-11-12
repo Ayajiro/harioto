@@ -50,16 +50,18 @@ impl Measurement {
 
 /// 量測一個音訊檔。這是會卡住執行緒的工作，呼叫端請放進 `spawn_blocking`。
 pub fn measure(path: &Path) -> Result<Measurement> {
-    let decoder =
-        rodio::Decoder::try_from(File::open(path)?).map_err(|e| anyhow!("解碼失敗：{e}"))?;
+    let decoder = rodio::Decoder::try_from(File::open(path)?)
+        .map_err(|e| anyhow!("could not decode: {e}"))?;
     let channels = decoder.channels() as u32;
     let rate = decoder.sample_rate();
     if channels == 0 || rate == 0 {
-        return Err(anyhow!("音訊格式不完整，無法量測"));
+        return Err(anyhow!(
+            "the audio format is incomplete, nothing to measure"
+        ));
     }
 
     let mut meter = EbuR128::new(channels, rate, Mode::I | Mode::TRUE_PEAK)
-        .map_err(|e| anyhow!("建立量測器失敗：{e:?}"))?;
+        .map_err(|e| anyhow!("could not start the meter: {e:?}"))?;
 
     // 固定大小的批次：記憶體用量跟曲長無關。
     const BATCH: usize = 8192;
@@ -69,19 +71,19 @@ pub fn measure(path: &Path) -> Result<Measurement> {
         if batch.len() == BATCH {
             meter
                 .add_frames_f32(&batch)
-                .map_err(|e| anyhow!("量測失敗：{e:?}"))?;
+                .map_err(|e| anyhow!("measuring failed: {e:?}"))?;
             batch.clear();
         }
     }
     if !batch.is_empty() {
         meter
             .add_frames_f32(&batch)
-            .map_err(|e| anyhow!("量測失敗：{e:?}"))?;
+            .map_err(|e| anyhow!("measuring failed: {e:?}"))?;
     }
 
     let lufs = meter
         .loudness_global()
-        .map_err(|e| anyhow!("讀取響度失敗：{e:?}"))?;
+        .map_err(|e| anyhow!("could not read the loudness: {e:?}"))?;
     let peak = (0..channels)
         .map(|c| meter.true_peak(c).unwrap_or(0.0))
         .fold(0.0f64, f64::max);
@@ -120,7 +122,7 @@ pub fn save(video_id: &str, measurement: Measurement) {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Err(e) = std::fs::write(&file, text) {
-        log::warn!("寫入響度資料失敗：{e}");
+        log::warn!("could not write the loudness file: {e}");
     }
 }
 

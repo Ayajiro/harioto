@@ -8,6 +8,7 @@ mod cli;
 mod control;
 mod cover;
 mod history;
+mod lang;
 mod loudness;
 mod mcp;
 mod probe;
@@ -31,7 +32,7 @@ fn stale_warning(version: &str) -> Option<String> {
         return None;
     }
     Some(format!(
-        "yt-dlp {version} 已經 {days} 天沒更新，YouTube 改版後可能靜默失敗，建議執行 brew upgrade yt-dlp"
+        "yt-dlp {version} is {days} days old; YouTube changes break stale copies silently, so try brew upgrade yt-dlp"
     ))
 }
 
@@ -53,12 +54,12 @@ fn init_logging() -> Option<std::path::PathBuf> {
 async fn selftest(query: &str) -> Result<()> {
     let version = youtube::version().await?;
     match youtube::version_age_days(&version) {
-        Some(days) => println!("yt-dlp {version}，距離發布 {days} 天"),
-        None => println!("yt-dlp {version}，無法判斷發布日期"),
+        Some(days) => println!("yt-dlp {version}, released {days} days ago"),
+        None => println!("yt-dlp {version}, release date unknown"),
     }
 
     let results = youtube::search(query, 5).await?;
-    println!("搜尋「{query}」得到 {} 筆：", results.len());
+    println!("searching for \"{query}\" found {}:", results.len());
     for video in &results {
         println!(
             "  {} | {} | {} | {}",
@@ -70,11 +71,11 @@ async fn selftest(query: &str) -> Result<()> {
     }
 
     let Some(first) = results.first() else {
-        println!("沒有結果，無法繼續測試下載。");
+        println!("nothing found, so there is nothing to download.");
         return Ok(());
     };
 
-    println!("電台（以第一首為種子，取前 8 筆）：");
+    println!("radio seeded with the first result, first 8:");
     match youtube::radio(&first.id, 8).await {
         Ok(tracks) => {
             for video in tracks.iter().take(8) {
@@ -87,15 +88,15 @@ async fn selftest(query: &str) -> Result<()> {
                 );
             }
         }
-        Err(e) => println!("  取得電台失敗：{e}"),
+        Err(e) => println!("  could not build the radio: {e}"),
     }
 
-    println!("正在下載第一首…");
+    println!("downloading the first one…");
     let started = std::time::Instant::now();
     let path = cache::ensure(&first.id).await?;
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     println!(
-        "下載完成：{} （{:.1} MB，耗時 {:.1} 秒）",
+        "downloaded: {} ({:.1} MB in {:.1} s)",
         path.display(),
         size as f64 / 1_048_576.0,
         started.elapsed().as_secs_f64()
@@ -103,14 +104,14 @@ async fn selftest(query: &str) -> Result<()> {
 
     let file = std::fs::File::open(&path)?;
     match rodio::Decoder::try_from(file) {
-        Ok(_) => println!("解碼器可以開啟這個檔案。"),
+        Ok(_) => println!("the decoder opens this file."),
         Err(e) => {
-            println!("解碼器無法開啟：{e}");
+            println!("the decoder cannot open it: {e}");
             return Ok(());
         }
     }
 
-    println!("試播五秒，位置應該隨實際時間前進：");
+    println!("playing five seconds; the position should track real time:");
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let mut player = audio::AudioPlayer::new(event_tx)?;
     player.set_volume(0.5);
@@ -122,14 +123,14 @@ async fn selftest(query: &str) -> Result<()> {
             _ = tokio::time::sleep_until(deadline) => break,
             event = event_rx.recv() => match event {
                 Some(audio::AudioEvent::Position(ms)) => {
-                    println!("  位置 {}", app::format_duration(ms));
+                    println!("  at {}", app::format_duration(ms));
                 }
                 Some(audio::AudioEvent::Ended) => {
-                    println!("  播放結束");
+                    println!("  finished");
                     break;
                 }
                 Some(audio::AudioEvent::Error(e)) => {
-                    println!("  播放錯誤：{e}");
+                    println!("  playback error: {e}");
                     break;
                 }
                 None => break,
@@ -160,7 +161,7 @@ async fn main() -> Result<()> {
         let before = cache::size_bytes();
         let freed = cache::prune(limit_mb * 1_048_576);
         println!(
-            "快取 {:.1} MB，上限 {} MB，釋出 {:.1} MB，剩下 {:.1} MB",
+            "cache {:.1} MB, limit {} MB, freed {:.1} MB, now {:.1} MB",
             before as f64 / 1_048_576.0,
             limit_mb,
             freed as f64 / 1_048_576.0,
@@ -184,15 +185,31 @@ async fn main() -> Result<()> {
         && !theme::PRESETS.contains(&name.as_str())
     {
         eprintln!(
-            "沒有叫「{name}」的內建主題，可用的是：{}",
+            "No built-in theme called \"{name}\". Available: {}",
             theme::PRESETS.join("、")
+        );
+        std::process::exit(1);
+    }
+
+    // `--lang <名稱>` 覆寫設定檔裡的語言。
+    let lang_flag = args
+        .iter()
+        .position(|a| a == "--lang")
+        .and_then(|pos| args.get(pos + 1))
+        .cloned();
+    if let Some(name) = lang_flag.as_ref()
+        && lang::Lang::parse(name).is_none()
+    {
+        eprintln!(
+            "No interface language called \"{name}\". Available: {}",
+            lang::NAMES.join(", ")
         );
         std::process::exit(1);
     }
 
     let startup_note = match youtube::version().await {
         Ok(version) => {
-            println!("yt-dlp {version} 就緒");
+            println!("yt-dlp {version} ready");
             stale_warning(&version)
         }
         Err(e) => {
@@ -211,10 +228,10 @@ async fn main() -> Result<()> {
         let control_tx = event_tx.clone();
         tokio::spawn(async move {
             if let Err(e) = control::serve(control_tx).await {
-                log::warn!("控制通道沒有開啟：{e}");
+                log::warn!("the control socket did not open: {e}");
             }
         });
-        println!("控制通道：{}", control::socket_path().display());
+        println!("control socket: {}", control::socket_path().display());
     }
 
     let audio_tx = event_tx.clone();
@@ -228,9 +245,9 @@ async fn main() -> Result<()> {
     });
 
     let audio = audio::AudioPlayer::new(audio_event_tx)?;
-    println!("音訊輸出就緒");
+    println!("audio output ready");
     if let Some(path) = log_path.as_ref() {
-        println!("日誌寫在 {}", path.display());
+        println!("log at {}", path.display());
     }
 
     // 問終端機現在的配色和畫不畫得出圖。要在進入畫面之前做，否則回覆會和
@@ -238,18 +255,20 @@ async fn main() -> Result<()> {
     let probed = probe::query();
     match probed.palette.as_ref() {
         Some(palette) => log::info!(
-            "終端機回報配色：前景 {:?}、背景 {:?}",
+            "the terminal reports foreground {:?} and background {:?}",
             palette.foreground,
             palette.background
         ),
-        None => log::info!("終端機沒有回報配色，palette: \"auto\" 會退回內建主題"),
+        None => log::info!(
+            "the terminal reported no colours, so palette: \"auto\" falls back to the preset"
+        ),
     }
     log::info!(
-        "終端機圖形協定：{}",
+        "terminal graphics: {}",
         if probed.graphics {
-            "支援，歌單底下會顯示縮圖"
+            "supported, the cover will show under the playlists"
         } else {
-            "沒有回應，不顯示縮圖"
+            "no answer, so no cover"
         }
     );
     theme::detect(probed.palette);
@@ -263,6 +282,7 @@ async fn main() -> Result<()> {
         &mut event_rx,
         startup_note,
         theme_preset,
+        lang_flag,
     )
     .await;
     cover::clear();
@@ -278,6 +298,7 @@ async fn run(
     rx: &mut mpsc::UnboundedReceiver<Msg>,
     startup_note: Option<String>,
     theme_preset: Option<String>,
+    lang_flag: Option<String>,
 ) -> Result<()> {
     // 鍵盤輸入在獨立執行緒讀取，避免阻塞 async 執行期。
     {
@@ -309,7 +330,7 @@ async fn run(
         });
     }
 
-    let mut app = App::new(audio, tx, startup_note, theme_preset);
+    let mut app = App::new(audio, tx, startup_note, theme_preset, lang_flag);
 
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, &mut app))?;

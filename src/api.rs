@@ -44,14 +44,15 @@ pub struct PlaylistSummary {
 /// 搜尋 YouTube。
 pub async fn search(query: &str, limit: usize) -> Result<Vec<Video>> {
     if query.trim().is_empty() {
-        return Err(anyhow!("搜尋關鍵字是空的"));
+        return Err(anyhow!("the search is empty"));
     }
     youtube::search(query, limit.clamp(1, 100)).await
 }
 
 /// 以一首歌為種子建立電台，種子排在第一筆，同時寫進種子紀錄。
 pub async fn radio(seed_input: &str, limit: usize) -> Result<Vec<Video>> {
-    let id = youtube::extract_id(seed_input).ok_or_else(|| anyhow!("無法解析影片 ID"))?;
+    let id = youtube::extract_id(seed_input)
+        .ok_or_else(|| anyhow!("could not read a video id from that"))?;
     let mut tracks = youtube::radio(&id, limit.clamp(1, 100)).await?;
 
     let seed = match tracks.iter().find(|t| t.id == id).cloned() {
@@ -89,18 +90,18 @@ pub fn playlist_show(name: &str) -> Result<Vec<Video>> {
     Library::load()
         .find(name)
         .map(|p| p.tracks.clone())
-        .ok_or_else(|| anyhow!("找不到歌單：{name}"))
+        .ok_or_else(|| anyhow!("no playlist called {name}"))
 }
 
 /// 建立歌單。名稱已存在時回報，不覆蓋既有內容。
 pub fn playlist_create(name: &str) -> Result<()> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(anyhow!("歌單名稱是空的"));
+        return Err(anyhow!("the playlist name is empty"));
     }
     let mut library = Library::load();
     if library.find(name).is_some() {
-        return Err(anyhow!("歌單已經存在：{name}"));
+        return Err(anyhow!("a playlist called {name} already exists"));
     }
     library.create(name);
     library.save()
@@ -110,16 +111,16 @@ pub fn playlist_create(name: &str) -> Result<()> {
 pub async fn playlist_add(name: &str, inputs: &[String]) -> Result<usize> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(anyhow!("歌單名稱是空的"));
+        return Err(anyhow!("the playlist name is empty"));
     }
     if inputs.is_empty() {
-        return Err(anyhow!("沒有要加入的影片"));
+        return Err(anyhow!("nothing to add"));
     }
 
     let mut videos = Vec::with_capacity(inputs.len());
     for input in inputs {
         let id = youtube::extract_id(input)
-            .ok_or_else(|| anyhow!("無法解析影片 ID：{input}"))?;
+            .ok_or_else(|| anyhow!("could not read a video id from {input}"))?;
         videos.push(youtube::lookup(&id).await?);
     }
 

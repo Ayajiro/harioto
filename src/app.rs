@@ -3,6 +3,7 @@
 use crate::{
     audio::{AudioEvent, AudioPlayer},
     cache, cover,
+    lang::{t, tf},
     loudness::{self, Measurement},
     store::Library,
     theme::Theme,
@@ -34,7 +35,10 @@ const MAX_AUTO_SKIP: usize = 10;
 pub enum Msg {
     Key(KeyEvent),
     Audio(AudioEvent),
-    Results { title: String, tracks: Vec<Video> },
+    Results {
+        title: String,
+        tracks: Vec<Video>,
+    },
     Radio {
         title: String,
         tracks: Vec<Video>,
@@ -143,6 +147,8 @@ pub struct App {
     pub theme: Theme,
     /// `--theme` 指定的內建主題，重讀設定檔時仍然優先。
     theme_preset: Option<String>,
+    /// `--lang` 指定的語言，設定檔沒寫時用它。
+    lang_flag: Option<String>,
     /// 主題檔上次讀到的修改時間，用來察覺外部改動。
     theme_mtime: Option<SystemTime>,
     /// 目前這首的縮圖，解開之後放著重複使用。
@@ -161,9 +167,14 @@ impl App {
         tx: UnboundedSender<Msg>,
         note: Option<String>,
         theme_preset: Option<String>,
+        lang_flag: Option<String>,
     ) -> Self {
         audio.set_volume(0.5);
         let theme = crate::theme::load(theme_preset.as_deref());
+        crate::lang::choose(
+            lang_flag.as_deref(),
+            theme.lang.map(crate::lang::Lang::name),
+        );
         let library = Library::load();
         let mut playlist_state = ListState::default();
         if !library.playlists.is_empty() {
@@ -181,12 +192,14 @@ impl App {
             playlist_state,
             tracks: Vec::new(),
             track_state: ListState::default(),
-            track_title: "搜尋結果".into(),
+            track_title: t!("搜尋結果", "Search results", "検索結果").into(),
             view: View::Search,
             now: None,
             status: note.unwrap_or_else(|| {
-                format!(
+                tf!(
                     "按 / 搜尋，按 r 開電台（快取 {:.0} MB）",
+                    "Press / to search, r for a radio (cache {:.0} MB)",
+                    "/ で検索、r でラジオ（キャッシュ {:.0} MB）",
                     cache::size_bytes() as f64 / 1_048_576.0
                 )
             }),
@@ -201,6 +214,7 @@ impl App {
             theme,
             theme_mtime: crate::theme::mtime(),
             theme_preset,
+            lang_flag,
             cover: None,
             cover_rect: None,
             cover_shown: None,
@@ -210,12 +224,23 @@ impl App {
     /// 開關縮圖。終端機畫不出圖時說明原因，免得按了沒反應。
     fn toggle_cover(&mut self) {
         if !cover::supported() {
-            self.set_status("這個終端機沒有回應圖形查詢，畫不出縮圖".into());
+            self.set_status(
+                t!(
+                    "這個終端機畫不出圖，沒有縮圖可以開",
+                    "This terminal draws no images, so there is no cover to show",
+                    "この端末は画像を表示できないため、サムネイルは出せません"
+                )
+                .into(),
+            );
             return;
         }
         self.cover_on = !self.cover_on;
-        let state = if self.cover_on { "開" } else { "關" };
-        self.set_status(format!("縮圖：{state}"));
+        let text = if self.cover_on {
+            t!("縮圖：開", "Cover art on", "サムネイル：オン")
+        } else {
+            t!("縮圖：關", "Cover art off", "サムネイル：オフ")
+        };
+        self.set_status(text.into());
     }
 
     /// 把縮圖畫到版面留好的位置。每畫完一幀呼叫一次，位置或曲目沒變就什麼都不做。
@@ -238,7 +263,7 @@ impl App {
         }
         match cover::place(image, rect) {
             Ok(()) => self.cover_shown = Some(key),
-            Err(e) => log::warn!("畫縮圖失敗：{e}"),
+            Err(e) => log::warn!("could not draw the cover: {e}"),
         }
     }
 
@@ -256,7 +281,7 @@ impl App {
             let path = match cover::ensure(&video_id).await {
                 Ok(path) => path,
                 Err(e) => {
-                    log::warn!("抓 {video_id} 的縮圖失敗：{e}");
+                    log::warn!("could not fetch the cover for {video_id}: {e}");
                     return;
                 }
             };
@@ -267,8 +292,8 @@ impl App {
                         image: Box::new(image),
                     });
                 }
-                Ok(Err(e)) => log::warn!("解 {video_id} 的縮圖失敗：{e}"),
-                Err(e) => log::warn!("解 {video_id} 的縮圖中斷：{e}"),
+                Ok(Err(e)) => log::warn!("could not decode the cover for {video_id}: {e}"),
+                Err(e) => log::warn!("decoding the cover for {video_id} was interrupted: {e}"),
             }
         });
     }
@@ -296,7 +321,7 @@ impl App {
                     });
                 }
                 Ok(_) => {}
-                Err(e) => log::warn!("查種子標籤失敗：{e}"),
+                Err(e) => log::warn!("could not look up the seed tags: {e}"),
             }
         });
     }
@@ -304,11 +329,26 @@ impl App {
     /// 響度平衡的狀態描述，開關與控制通道共用。
     fn normalize_status(&self) -> String {
         if !self.normalize {
-            "響度平衡：關".into()
+            t!(
+                "響度平衡：關",
+                "Loudness balance off",
+                "ラウドネス調整：オフ"
+            )
+            .into()
         } else if self.gain_ready() {
-            format!("響度平衡：開（這首 {:+.1} dB）", self.gain_db())
+            tf!(
+                "響度平衡：開（這首 {:+.1} dB）",
+                "Loudness balance on ({:+.1} dB on this one)",
+                "ラウドネス調整：オン（この曲 {:+.1} dB）",
+                self.gain_db()
+            )
         } else {
-            "響度平衡：開（這首還在量）".into()
+            t!(
+                "響度平衡：開（這首還在量）",
+                "Loudness balance on (still measuring this one)",
+                "ラウドネス調整：オン（この曲は測定中）"
+            )
+            .into()
         }
     }
 
@@ -330,7 +370,16 @@ impl App {
         self.theme = crate::theme::load(self.theme_preset.as_deref());
         // 設定檔是這件事的主張，重讀之後按鍵的臨時改動就讓位。
         self.cover_on = self.theme.cover;
-        self.status = "已套用新的主題設定".into();
+        crate::lang::choose(
+            self.lang_flag.as_deref(),
+            self.theme.lang.map(crate::lang::Lang::name),
+        );
+        self.status = t!(
+            "已套用新的主題設定",
+            "Theme file reloaded",
+            "テーマ設定を読み込みました"
+        )
+        .into();
     }
 
     pub fn volume_percent(&self) -> u16 {
@@ -345,11 +394,15 @@ impl App {
             return;
         }
         let tx = self.tx.clone();
-        self.status = format!("正在搜尋「{query}」…");
+        self.status = tf!(
+            "正在搜尋「{query}」…",
+            "Searching for \"{query}\"…",
+            "「{query}」を検索中…"
+        );
         tokio::spawn(async move {
             let msg = match youtube::search(&query, SEARCH_LIMIT).await {
                 Ok(tracks) => Msg::Results {
-                    title: format!("搜尋：{query}"),
+                    title: tf!("搜尋：{query}", "Search: {query}", "検索：{query}"),
                     tracks,
                 },
                 Err(e) => Msg::Error(e.to_string()),
@@ -370,7 +423,12 @@ impl App {
         });
 
         let Some(seed) = seed else {
-            self.status = "請先選一首曲目，或先播一首再開電台".into();
+            self.status = t!(
+                "請先選一首曲目，或先播一首再開電台",
+                "Select a track, or play one, before starting a radio",
+                "曲を選ぶか再生してから、ラジオを始めてください"
+            )
+            .into();
             return;
         };
 
@@ -378,8 +436,13 @@ impl App {
         let continue_current = playing.map(|p| p.id == seed.id).unwrap_or(false);
 
         let tx = self.tx.clone();
-        let title = format!("電台：{}", seed.title);
-        self.status = format!("正在建立電台：{}…", seed.title);
+        let title = tf!("電台：{}", "Radio: {}", "ラジオ：{}", seed.title);
+        self.status = tf!(
+            "正在建立電台：{}…",
+            "Building a radio from {}…",
+            "{} からラジオを作成中…",
+            seed.title
+        );
         tokio::spawn(async move {
             // 種子固定排在第一位、並寫進種子紀錄，都在 api 層處理。
             let msg = match crate::api::radio_with_seed(&seed, RADIO_LIMIT).await {
@@ -406,10 +469,18 @@ impl App {
         self.tracks = playlist.tracks.clone();
         self.view = View::Playlist(playlist.name.clone());
         self.playing_index = None;
-        self.track_state
-            .select(if self.tracks.is_empty() { None } else { Some(0) });
+        self.track_state.select(if self.tracks.is_empty() {
+            None
+        } else {
+            Some(0)
+        });
         self.focus = Focus::Tracks;
-        self.status = format!("清單共 {} 首", self.tracks.len());
+        self.status = tf!(
+            "清單共 {} 首",
+            "{} tracks in the list",
+            "リストは {} 曲",
+            self.tracks.len()
+        );
     }
 
     // ---------- 控制通道 ----------
@@ -463,7 +534,8 @@ impl App {
         let action = match control {
             Control::Status => return self.status_json(),
             Control::Toggle | Control::Pause | Control::Resume if buffering => {
-                note = Some("曲目還在緩衝，暫停與繼續這時不會生效".into());
+                note =
+                    Some("the track is still buffering, so pause and resume do nothing yet".into());
                 "buffering"
             }
             Control::Toggle => {
@@ -493,7 +565,12 @@ impl App {
             Control::Stop => {
                 self.audio.stop();
                 self.now = None;
-                self.status = "已停止（來自控制通道）".into();
+                self.status = t!(
+                    "已停止（來自控制通道）",
+                    "Stopped (via control)",
+                    "停止しました（コントロール経由）"
+                )
+                .into();
                 "stop"
             }
             Control::Remove(target) => {
@@ -502,7 +579,7 @@ impl App {
                     Some(id) => self.tracks.iter().position(|track| track.id == id),
                 };
                 if index.is_none() {
-                    return serde_json::json!({ "error": "這首不在目前的清單裡" });
+                    return serde_json::json!({ "error": "that track is not in the current list" });
                 }
                 self.drop_from_queue(index);
                 "remove"
@@ -516,7 +593,11 @@ impl App {
             }
             Control::Volume(level) => {
                 self.audio.set_volume(level as f32 / 100.0);
-                self.status = format!("音量 {level}%（來自控制通道）");
+                self.status = tf!(
+                    "音量 {level}%（來自控制通道）",
+                    "Volume {level}% (via control)",
+                    "音量 {level}%（コントロール経由）"
+                );
                 "volume"
             }
             Control::Replace {
@@ -527,7 +608,7 @@ impl App {
             } => {
                 let (tracks, dropped) = Self::playable_only(tracks);
                 if tracks.is_empty() {
-                    return serde_json::json!({ "error": "清單裡沒有可播的曲目" });
+                    return serde_json::json!({ "error": "nothing in that list can be played" });
                 }
                 self.track_title = title;
                 self.tracks = tracks;
@@ -539,23 +620,41 @@ impl App {
                 self.play_index(start);
                 self.remember_seed(seed);
                 self.status = if dropped > 0 {
-                    format!("清單共 {} 首（略過 {dropped} 首過長項目）", self.tracks.len())
+                    tf!(
+                        "清單共 {} 首（略過 {dropped} 首過長項目）",
+                        "{} tracks in the list ({dropped} too long, skipped)",
+                        "リストは {} 曲（長すぎる {dropped} 曲は除外）",
+                        self.tracks.len()
+                    )
                 } else {
-                    format!("清單共 {} 首", self.tracks.len())
+                    tf!(
+                        "清單共 {} 首",
+                        "{} tracks in the list",
+                        "リストは {} 曲",
+                        self.tracks.len()
+                    )
                 };
                 "replace"
             }
             Control::Queue(tracks) => {
                 let (tracks, dropped) = Self::playable_only(tracks);
                 if tracks.is_empty() {
-                    return serde_json::json!({ "error": "沒有可加入的曲目" });
+                    return serde_json::json!({ "error": "nothing to queue" });
                 }
                 let added = tracks.len();
                 self.tracks.extend(tracks);
                 self.status = if dropped > 0 {
-                    format!("已排入 {added} 首（略過 {dropped} 首過長項目）")
+                    tf!(
+                        "已排入 {added} 首（略過 {dropped} 首過長項目）",
+                        "Queued {added} tracks ({dropped} too long, skipped)",
+                        "{added} 曲を追加（長すぎる {dropped} 曲は除外）"
+                    )
                 } else {
-                    format!("已排入 {added} 首")
+                    tf!(
+                        "已排入 {added} 首",
+                        "Queued {added} tracks",
+                        "{added} 曲を追加しました"
+                    )
                 };
                 "queue"
             }
@@ -578,7 +677,11 @@ impl App {
         };
         let Some(playlist) = self.library.find(&name) else {
             // 歌單被別的行程刪掉了，右欄留著目前內容，只改提示。
-            self.status = format!("歌單「{name}」已經不在檔案裡");
+            self.status = tf!(
+                "歌單「{name}」已經不在檔案裡",
+                "The playlist \"{name}\" is gone from the file",
+                "プレイリスト「{name}」はファイルから消えています"
+            );
             return;
         };
 
@@ -599,7 +702,11 @@ impl App {
         let next_selection = selected_id
             .as_ref()
             .and_then(|id| self.tracks.iter().position(|t| &t.id == id))
-            .or(if self.tracks.is_empty() { None } else { Some(0) });
+            .or(if self.tracks.is_empty() {
+                None
+            } else {
+                Some(0)
+            });
         self.track_state.select(next_selection);
         self.pending_confirm = None;
     }
@@ -624,7 +731,7 @@ impl App {
         if matches!(self.view, View::Playlist(_)) {
             self.sync_open_playlist();
         }
-        log::info!("歌單檔案被外部改動，已重新載入");
+        log::info!("the playlist file changed on disk and was reloaded");
     }
 
     // ---------- 歌單編輯 ----------
@@ -633,7 +740,12 @@ impl App {
         let (Some(track_index), Some(playlist_index)) =
             (self.track_state.selected(), self.playlist_state.selected())
         else {
-            self.status = "請先選好左欄的歌單與右欄的曲目".into();
+            self.status = t!(
+                "請先選好左欄的歌單與右欄的曲目",
+                "Select a playlist on the left and a track on the right first",
+                "左のプレイリストと右の曲を選んでください"
+            )
+            .into();
             return;
         };
         let Some(track) = self.tracks.get(track_index).cloned() else {
@@ -655,7 +767,12 @@ impl App {
             .map(|p| p.tracks.iter().any(|t| t.id == track.id))
             .unwrap_or(false);
         if already {
-            self.status = format!("「{}」已經在這份歌單裡", track.title);
+            self.status = tf!(
+                "「{}」已經在這份歌單裡",
+                "\"{}\" is already in this playlist",
+                "「{}」はすでにこのプレイリストにあります",
+                track.title
+            );
             return;
         }
 
@@ -667,7 +784,12 @@ impl App {
             .mutate(move |lib| lib.add_track(&target, video).map(|_| ()));
         match result {
             Ok(()) => {
-                self.status = format!("已加入「{name}」：{}", track.title);
+                self.status = tf!(
+                    "已加入「{name}」：{}",
+                    "Added to \"{name}\": {}",
+                    "「{name}」に追加：{}",
+                    track.title
+                );
                 self.sync_open_playlist();
             }
             Err(e) => self.status = e.to_string(),
@@ -688,7 +810,7 @@ impl App {
     /// 從目前清單拿掉一首。正在播的那首被拿掉時，原位就是下一首，直接接著播。
     fn drop_from_queue(&mut self, index: Option<usize>) {
         let Some(index) = index else {
-            self.set_status("沒有選到曲目".into());
+            self.set_status(t!("沒有選到曲目", "No track selected", "曲が選ばれていません").into());
             return;
         };
         let Some(track) = self.tracks.get(index).cloned() else {
@@ -716,12 +838,22 @@ impl App {
             self.track_state
                 .select(Some(index.min(self.tracks.len() - 1)));
         }
-        self.set_status(format!("已從清單移除：{}", track.title));
+        self.set_status(tf!(
+            "已從清單移除：{}",
+            "Dropped from the list: {}",
+            "リストから削除：{}",
+            track.title
+        ));
     }
 
     fn remove_from_playlist(&mut self) {
         let View::Playlist(name) = self.view.clone() else {
-            self.status = "只有在歌單檢視裡才能移除曲目".into();
+            self.status = t!(
+                "只有在歌單檢視裡才能移除曲目",
+                "Tracks can only be removed while a playlist is open",
+                "プレイリストを開いているときだけ削除できます"
+            )
+            .into();
             return;
         };
         let Some(track_index) = self.track_state.selected() else {
@@ -745,7 +877,7 @@ impl App {
                     self.track_state
                         .select(Some(track_index.min(self.tracks.len() - 1)));
                 }
-                self.status = format!("已移除：{}", track.title);
+                self.status = tf!("已移除：{}", "Removed: {}", "削除：{}", track.title);
             }
             Err(e) => self.status = e.to_string(),
         }
@@ -763,7 +895,11 @@ impl App {
         });
         match result {
             Ok(()) => {
-                self.status = format!("已建立歌單「{name}」");
+                self.status = tf!(
+                    "已建立歌單「{name}」",
+                    "Created the playlist \"{name}\"",
+                    "プレイリスト「{name}」を作成しました"
+                );
                 let index = self
                     .library
                     .playlists
@@ -781,11 +917,20 @@ impl App {
     /// 判斷這首是不是長到不像單曲，回傳攔下來的理由。
     fn too_long_reason(video: &Video) -> Option<String> {
         if video.duration_ms == 0 {
-            return Some("長度未知，可能是直播".into());
+            return Some(
+                t!(
+                    "長度未知，可能是直播",
+                    "Unknown length, probably a livestream",
+                    "長さ不明、ライブ配信かもしれません"
+                )
+                .into(),
+            );
         }
         if video.duration_ms > LONG_TRACK_MS {
-            return Some(format!(
+            return Some(tf!(
                 "長度 {}，可能是合輯或直播",
+                "Runs {}, probably a compilation or a livestream",
+                "長さ {}、ミックスかライブ配信かもしれません",
                 format_duration(video.duration_ms)
             ));
         }
@@ -798,11 +943,16 @@ impl App {
             return;
         };
         if let Some(reason) = Self::too_long_reason(&video)
-            && self.pending_confirm != Some(index) {
-                self.pending_confirm = Some(index);
-                self.status = format!("{reason}。再按一次 Enter 確認播放。");
-                return;
-            }
+            && self.pending_confirm != Some(index)
+        {
+            self.pending_confirm = Some(index);
+            self.status = tf!(
+                "{reason}。再按一次 Enter 確認播放。",
+                "{reason}. Press Enter again to play it anyway.",
+                "{reason}。もう一度 Enter で再生します。"
+            );
+            return;
+        }
         self.pending_confirm = None;
         self.play_index(index);
     }
@@ -900,7 +1050,12 @@ impl App {
         loop {
             candidate += offset;
             if candidate < 0 || candidate as usize >= self.tracks.len() {
-                self.status = "清單已經到底了".into();
+                self.status = t!(
+                    "清單已經到底了",
+                    "That is the end of the list",
+                    "リストの最後です"
+                )
+                .into();
                 return;
             }
             let index = candidate as usize;
@@ -909,14 +1064,18 @@ impl App {
             };
             if Self::too_long_reason(video).is_none() {
                 if skipped > 0 {
-                    log::info!("自動接續時跳過 {skipped} 首過長的曲目");
+                    log::info!("autoplay skipped {skipped} items that were too long");
                 }
                 self.play_index(index);
                 return;
             }
             skipped += 1;
             if skipped >= MAX_AUTO_SKIP {
-                self.status = format!("連續 {skipped} 首都過長，已停止自動接續");
+                self.status = tf!(
+                    "連續 {skipped} 首都過長，已停止自動接續",
+                    "{skipped} long items in a row, autoplay stopped",
+                    "長い項目が {skipped} 曲続いたので自動再生を止めました"
+                );
                 return;
             }
         }
@@ -960,7 +1119,7 @@ impl App {
             self.audio.volume() - VOLUME_STEP
         };
         self.audio.set_volume(next);
-        self.status = format!("音量 {}%", self.volume_percent());
+        self.status = tf!("音量 {}%", "Volume {}%", "音量 {}%", self.volume_percent());
     }
 
     // ---------- 清單移動 ----------
@@ -1005,13 +1164,21 @@ impl App {
             Msg::Key(key) => self.handle_key(key),
             Msg::Audio(event) => self.handle_audio(event),
             Msg::Results { title, tracks } => {
-                self.status = format!("找到 {} 筆", tracks.len());
+                self.status = tf!(
+                    "找到 {} 筆",
+                    "Found {} results",
+                    "{} 件見つかりました",
+                    tracks.len()
+                );
                 self.track_title = title;
                 self.tracks = tracks;
                 self.view = View::Search;
                 self.playing_index = None;
-                self.track_state
-                    .select(if self.tracks.is_empty() { None } else { Some(0) });
+                self.track_state.select(if self.tracks.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                });
                 self.focus = Focus::Tracks;
             }
             Msg::Radio {
@@ -1021,10 +1188,20 @@ impl App {
                 seed,
             } => {
                 if tracks.len() < 2 {
-                    self.status = "電台沒有回傳其他曲目".into();
+                    self.status = t!(
+                        "電台沒有回傳其他曲目",
+                        "The radio came back with nothing else",
+                        "ラジオは他の曲を返しませんでした"
+                    )
+                    .into();
                     return;
                 }
-                self.set_status(format!("電台接著還有 {} 首", tracks.len() - 1));
+                self.set_status(tf!(
+                    "電台接著還有 {} 首",
+                    "{} more tracks on the radio",
+                    "ラジオの続きは {} 曲",
+                    tracks.len() - 1
+                ));
                 self.remember_seed(Some(seed));
                 self.track_title = title;
                 self.tracks = tracks;
@@ -1072,7 +1249,7 @@ impl App {
                 measurement,
             } => {
                 log::info!(
-                    "{video_id}：{:.1} LUFS，真實峰值 {:.2} dBTP，增益 {:+.1} dB",
+                    "{video_id}: {:.1} LUFS, true peak {:.2} dBTP, gain {:+.1} dB",
                     measurement.lufs,
                     measurement.peak_dbtp,
                     measurement.gain_db()
@@ -1096,7 +1273,7 @@ impl App {
                 }
             }
             Msg::Error(text) => {
-                self.status = format!("錯誤：{text}");
+                self.status = tf!("錯誤：{text}", "Error: {text}", "エラー：{text}");
                 if let Some(now) = self.now.as_mut() {
                     now.buffering = false;
                 }
@@ -1114,10 +1291,16 @@ impl App {
                 }
             }
             AudioEvent::Ended => {
-                log::info!("播放結束，換下一首");
+                log::info!("track finished, moving to the next one");
                 self.play_offset(1);
             }
-            AudioEvent::Error(text) => self.status = format!("播放錯誤：{text}"),
+            AudioEvent::Error(text) => {
+                self.status = tf!(
+                    "播放錯誤：{text}",
+                    "Playback error: {text}",
+                    "再生エラー：{text}"
+                )
+            }
         }
     }
 
@@ -1131,7 +1314,8 @@ impl App {
             match key.code {
                 KeyCode::Esc => {
                     self.mode = Mode::Browse;
-                    self.status = "已取消輸入".into();
+                    self.status =
+                        t!("已取消輸入", "Input cancelled", "入力を取り消しました").into();
                 }
                 KeyCode::Enter => {
                     let mode = self.mode;
@@ -1156,12 +1340,22 @@ impl App {
             KeyCode::Char('/') => {
                 self.mode = Mode::Search;
                 self.input.clear();
-                self.status = "輸入關鍵字後按 Enter 搜尋".into();
+                self.status = t!(
+                    "輸入關鍵字後按 Enter 搜尋",
+                    "Type a query and press Enter to search",
+                    "キーワードを入力して Enter で検索"
+                )
+                .into();
             }
             KeyCode::Char('N') => {
                 self.mode = Mode::NewPlaylist;
                 self.input.clear();
-                self.status = "輸入新歌單名稱後按 Enter".into();
+                self.status = t!(
+                    "輸入新歌單名稱後按 Enter",
+                    "Type a name for the playlist and press Enter",
+                    "新しいプレイリスト名を入力して Enter"
+                )
+                .into();
             }
             KeyCode::Tab => {
                 self.focus = match self.focus {
@@ -1198,7 +1392,7 @@ impl App {
             KeyCode::Char('s') => {
                 self.audio.stop();
                 self.now = None;
-                self.status = "已停止".into();
+                self.status = t!("已停止", "Stopped", "停止しました").into();
             }
             _ => {}
         }
@@ -1221,6 +1415,6 @@ fn spawn_measure(tx: UnboundedSender<Msg>, video_id: String, path: PathBuf) {
                 measurement,
             });
         }
-        Err(e) => log::warn!("量測 {video_id} 的響度失敗：{e}"),
+        Err(e) => log::warn!("could not measure the loudness of {video_id}: {e}"),
     });
 }

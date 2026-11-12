@@ -7,40 +7,42 @@ use anyhow::Result;
 use serde_json::json;
 
 pub const HELP: &str = "\
-harioto — 終端機裡的電台
+harioto - a radio in your terminal
 
-用法：
-  harioto [--theme <名稱>]                   啟動播放器
-  harioto search <關鍵字> [--limit N]        搜尋 YouTube
-  harioto radio <影片ID或網址> [--limit N]    建立電台，種子排第一筆
-  harioto playlist list                     列出歌單
-  harioto playlist show <名稱>               列出歌單內容
-  harioto playlist create <名稱>             建立歌單
-  harioto playlist add <名稱> <影片...>      加入歌單，歌單不存在就先建立
-  harioto history [--limit N]               播放紀錄，最新在前
-  harioto seeds [--limit N]                 電台種子紀錄，最新在前
-  harioto ctl <指令> [對象]                 控制正在執行中的播放器
-  harioto mcp                               以 MCP 伺服器執行，供 AI 客戶端呼叫
-  harioto --selftest <關鍵字>                搜尋、下載、解碼、試播五秒
-  harioto --prune [MB]                      把音訊快取修剪到指定上限
+Usage:
+  harioto [--theme <name>] [--lang <name>]   Start the player
+  harioto search <words> [--limit N]         Search YouTube
+  harioto radio <video id or url> [--limit N]  Build a radio, seed first
+  harioto playlist list                      List playlists
+  harioto playlist show <name>               List what is in one
+  harioto playlist create <name>             Create one
+  harioto playlist add <name> <video...>     Add to one, creating it if new
+  harioto history [--limit N]                Play history, newest first
+  harioto seeds [--limit N]                  Radio seeds, newest first
+  harioto ctl <command> [target]             Drive a running player
+  harioto mcp                                Run as an MCP server for AI clients
+  harioto --selftest <words>                 Search, download, decode, play 5 s
+  harioto --prune [MB]                       Trim the audio cache to a limit
 
-控制指令：
-  harioto ctl status                        目前播放狀態
-  harioto ctl play <ID或關鍵字>              立刻播這一首
-  harioto ctl radio <ID或關鍵字>             以這首為種子開電台並開始播
-  harioto ctl queue <ID或關鍵字>             排進目前清單的後面
-  harioto ctl pause | resume | toggle       暫停、繼續、切換
-  harioto ctl next | prev | stop            下一首、上一首、停止
-  harioto ctl volume <0-100>                音量
-  harioto ctl normalize on|off|toggle       響度平衡的開關
-  harioto ctl remove [影片ID]               從清單拿掉一首，不給就是正在播的那首
+Control commands:
+  harioto ctl status                         What is playing now
+  harioto ctl play <id or words>             Play this one now
+  harioto ctl radio <id or words>            Open a radio from it and play
+  harioto ctl queue <id or words>            Append to the current list
+  harioto ctl pause | resume | toggle        Pause, resume, switch
+  harioto ctl next | prev | stop             Next, previous, stop
+  harioto ctl volume <0-100>                 Volume
+  harioto ctl normalize on|off|toggle        Loudness balance
+  harioto ctl remove [video id]              Drop one from the list, default the playing one
 
-選項：
-  --json     以 JSON 輸出，給程式讀
-  --limit N  筆數上限
-  --theme    內建主題：ember、mono、light，覆寫 ~/.config/harioto/theme.json
-             主題檔的 palette 可以指向終端機主題（ghostty 或 JSON 格式），套用它的配色
-             palette 寫 auto 則在啟動時直接問終端機現在的顏色
+Options:
+  --json     Print JSON, for programs
+  --limit N  How many at most
+  --theme    Built-in themes: ember, mono, light. Overrides ~/.config/harioto/theme.json
+             That file's palette can point at a terminal theme (Ghostty or JSON) to borrow its colours
+             palette set to auto asks the terminal itself at startup
+  --lang     Interface language: zh, en, ja. Overrides the theme file's lang
+             With neither, LC_ALL, LC_MESSAGES and LANG decide; English if they say nothing
 ";
 
 /// 找出 `--limit N`，沒給就用預設值。
@@ -93,7 +95,7 @@ fn print_tracks(videos: &[Video], json: bool) {
             v.title
         );
     }
-    println!("共 {} 筆", videos.len());
+    println!("{} in all", videos.len());
 }
 
 fn print_entries(entries: &[Entry], json: bool) {
@@ -105,7 +107,7 @@ fn print_entries(entries: &[Entry], json: bool) {
     for e in entries {
         println!("{} | {} | {} | {}", e.at, e.id, e.channel, e.title);
     }
-    println!("共 {} 筆", entries.len());
+    println!("{} in all", entries.len());
 }
 
 fn fail(message: String, json: bool) -> Result<()> {
@@ -170,7 +172,7 @@ pub async fn dispatch(args: &[String]) -> Option<Result<()>> {
 async fn ctl(ops: &[String], rest: &[String], json: bool) -> Result<()> {
     let Some(command) = ops.first().cloned() else {
         return fail(
-            "用法：harioto ctl <status|play|radio|queue|pause|resume|toggle|next|prev|stop|volume|normalize|remove>".into(),
+            "usage: harioto ctl <status|play|radio|queue|pause|resume|toggle|next|prev|stop|volume|normalize|remove>".into(),
             json,
         );
     };
@@ -195,7 +197,10 @@ async fn ctl(ops: &[String], rest: &[String], json: bool) -> Result<()> {
     }
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&answer).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&answer).unwrap_or_default()
+        );
         return Ok(());
     }
 
@@ -211,9 +216,9 @@ async fn ctl(ops: &[String], rest: &[String], json: bool) -> Result<()> {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32;
             let state = if playing.get("paused").and_then(|v| v.as_bool()) == Some(true) {
-                "暫停"
+                "paused"
             } else {
-                "播放中"
+                "playing"
             };
             println!(
                 "{state} {} / {} | {} | {}",
@@ -223,15 +228,18 @@ async fn ctl(ops: &[String], rest: &[String], json: bool) -> Result<()> {
                 field("title")
             );
         }
-        _ => println!("目前沒有在播放"),
+        _ => println!("nothing playing"),
     }
     if let Some(note) = answer.get("note").and_then(|v| v.as_str()) {
         println!("{note}");
     }
     println!(
-        "清單：{}（{} 首）｜音量 {}%",
+        "list: {} ({} tracks) | volume {}%",
         answer.get("list").and_then(|v| v.as_str()).unwrap_or(""),
-        answer.get("queue_len").and_then(|v| v.as_u64()).unwrap_or(0),
+        answer
+            .get("queue_len")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
         answer.get("volume").and_then(|v| v.as_u64()).unwrap_or(0)
     );
     Ok(())
@@ -247,9 +255,9 @@ async fn playlist(ops: &[String], json: bool) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
             } else {
                 for p in &items {
-                    println!("{:>4} 首 | {}", p.count, p.name);
+                    println!("{:>4} tracks | {}", p.count, p.name);
                 }
-                println!("共 {} 份歌單", items.len());
+                println!("{} playlists in all", items.len());
             }
             Ok(())
         }
@@ -270,7 +278,7 @@ async fn playlist(ops: &[String], json: bool) -> Result<()> {
                     if json {
                         println!("{}", json!({ "created": name }));
                     } else {
-                        println!("已建立歌單：{name}");
+                        println!("created the playlist {name}");
                     }
                     Ok(())
                 }
@@ -279,7 +287,7 @@ async fn playlist(ops: &[String], json: bool) -> Result<()> {
         }
         "add" => {
             let Some(name) = ops.get(1).cloned() else {
-                return fail("用法：harioto playlist add <名稱> <影片...>".into(), json);
+                return fail("usage: harioto playlist add <name> <video...>".into(), json);
             };
             let videos: Vec<String> = ops[2..].to_vec();
             match api::playlist_add(&name, &videos).await {
@@ -287,13 +295,13 @@ async fn playlist(ops: &[String], json: bool) -> Result<()> {
                     if json {
                         println!("{}", json!({ "playlist": name, "count": count }));
                     } else {
-                        println!("{name} 現在有 {count} 首");
+                        println!("{name} now holds {count} tracks");
                     }
                     Ok(())
                 }
                 Err(e) => fail(e.to_string(), json),
             }
         }
-        other => fail(format!("不認得的子指令：playlist {other}"), json),
+        other => fail(format!("unknown subcommand: playlist {other}"), json),
     }
 }

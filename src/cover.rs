@@ -78,12 +78,17 @@ pub fn decode(path: &Path) -> Result<Image> {
         zune_jpeg::JpegDecoder::new(zune_jpeg::zune_core::bytestream::ZCursor::new(&bytes));
     let rgb = decoder
         .decode()
-        .map_err(|e| anyhow!("解碼縮圖失敗：{e:?}"))?;
-    let info = decoder.info().ok_or_else(|| anyhow!("縮圖沒有尺寸資訊"))?;
+        .map_err(|e| anyhow!("could not decode the thumbnail: {e:?}"))?;
+    let info = decoder
+        .info()
+        .ok_or_else(|| anyhow!("the thumbnail carries no size"))?;
     let (width, height) = (info.width as u32, info.height as u32);
     let expected = width as usize * height as usize * 3;
     if rgb.len() < expected {
-        return Err(anyhow!("縮圖像素不足：{} < {expected}", rgb.len()));
+        return Err(anyhow!(
+            "the thumbnail is short of pixels: {} < {expected}",
+            rgb.len()
+        ));
     }
     Ok(Image { width, height, rgb })
 }

@@ -50,7 +50,7 @@ impl AudioPlayer {
             let stream = match rodio::OutputStreamBuilder::open_default_stream() {
                 Ok(stream) => stream,
                 Err(e) => {
-                    let _ = ready_tx.send(Err(format!("開啟音訊輸出失敗：{e}")));
+                    let _ = ready_tx.send(Err(format!("could not open the audio output: {e}")));
                     return;
                 }
             };
@@ -75,7 +75,8 @@ impl AudioPlayer {
                             }
                             Err(e) => {
                                 loaded = false;
-                                let _ = events.send(AudioEvent::Error(format!("解碼失敗：{e}")));
+                                let _ = events
+                                    .send(AudioEvent::Error(format!("could not decode: {e}")));
                             }
                         }
                     }
@@ -83,8 +84,9 @@ impl AudioPlayer {
                     Ok(AudioCommand::Pause) => sink.pause(),
                     Ok(AudioCommand::Seek(ms)) => {
                         if sink.try_seek(Duration::from_millis(ms as u64)).is_err() {
-                            let _ =
-                                events.send(AudioEvent::Error("這個音訊格式不支援跳轉".into()));
+                            let _ = events.send(AudioEvent::Error(
+                                "this format does not support seeking".into(),
+                            ));
                         }
                     }
                     Ok(AudioCommand::Volume(v)) => sink.set_volume(v),
@@ -115,7 +117,7 @@ impl AudioPlayer {
                 gain: 1.0,
             }),
             Ok(Err(e)) => Err(anyhow!(e)),
-            Err(_) => Err(anyhow!("音訊輸出啟動逾時")),
+            Err(_) => Err(anyhow!("the audio output did not start in time")),
         }
     }
 

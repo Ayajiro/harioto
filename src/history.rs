@@ -56,7 +56,7 @@ pub fn path(kind: Kind) -> PathBuf {
 /// 寫進一筆紀錄。失敗只記在日誌裡，播放不該因為寫紀錄而中斷。
 pub fn record(kind: Kind, video: &Video) {
     if let Err(e) = try_record(kind, video) {
-        log::warn!("寫入{}紀錄失敗：{e}", kind.file_name());
+        log::warn!("could not write to {}: {e}", kind.file_name());
     }
 }
 
@@ -77,16 +77,18 @@ fn try_record(kind: Kind, video: &Video) -> Result<()> {
 
     let path = path(kind);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| anyhow!("建立設定目錄失敗：{e}"))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow!("could not create the config directory: {e}"))?;
     }
 
-    let line = serde_json::to_string(&entry).map_err(|e| anyhow!("序列化失敗：{e}"))?;
+    let line =
+        serde_json::to_string(&entry).map_err(|e| anyhow!("could not serialise the entry: {e}"))?;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|e| anyhow!("開啟紀錄失敗：{e}"))?;
-    writeln!(file, "{line}").map_err(|e| anyhow!("寫入紀錄失敗：{e}"))?;
+        .map_err(|e| anyhow!("could not open the log: {e}"))?;
+    writeln!(file, "{line}").map_err(|e| anyhow!("could not write the log: {e}"))?;
     drop(file);
 
     trim(kind)
@@ -101,7 +103,8 @@ fn trim(kind: Kind) -> Result<()> {
         return Ok(());
     }
 
-    let text = std::fs::read_to_string(&path).map_err(|e| anyhow!("讀取紀錄失敗：{e}"))?;
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| anyhow!("could not read the log: {e}"))?;
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     if lines.len() <= limit {
         return Ok(());
@@ -110,8 +113,8 @@ fn trim(kind: Kind) -> Result<()> {
     let kept = &lines[lines.len() - limit..];
     let mut out = kept.join("\n");
     out.push('\n');
-    std::fs::write(&path, out).map_err(|e| anyhow!("修剪紀錄失敗：{e}"))?;
-    log::info!("{} 修剪到 {limit} 筆", kind.file_name());
+    std::fs::write(&path, out).map_err(|e| anyhow!("could not trim the log: {e}"))?;
+    log::info!("{} trimmed to {limit} entries", kind.file_name());
     Ok(())
 }
 

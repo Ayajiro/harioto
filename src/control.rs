@@ -5,6 +5,7 @@
 
 use crate::api;
 use crate::app::Msg;
+use crate::lang::tf;
 use crate::youtube::{self, Video};
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
@@ -49,23 +50,25 @@ pub fn socket_path() -> PathBuf {
 pub async fn serve(tx: UnboundedSender<Msg>) -> Result<()> {
     let path = socket_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| anyhow!("建立設定目錄失敗：{e}"))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow!("could not create the config directory: {e}"))?;
     }
 
     if UnixStream::connect(&path).await.is_ok() {
-        return Err(anyhow!("控制通道已經被另一個播放器佔用"));
+        return Err(anyhow!("another player already holds the control socket"));
     }
     let _ = std::fs::remove_file(&path);
 
-    let listener = UnixListener::bind(&path).map_err(|e| anyhow!("無法開啟控制通道：{e}"))?;
-    log::info!("控制通道：{}", path.display());
+    let listener =
+        UnixListener::bind(&path).map_err(|e| anyhow!("could not open the control socket: {e}"))?;
+    log::info!("control socket: {}", path.display());
 
     loop {
         let (stream, _) = listener.accept().await?;
         let tx = tx.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_connection(stream, tx).await {
-                log::warn!("控制連線結束：{e}");
+                log::warn!("control connection ended: {e}");
             }
         });
     }
@@ -86,9 +89,11 @@ async fn handle_connection(stream: UnixStream, tx: UnboundedSender<Msg>) -> Resu
         }
         let reply = match serde_json::from_str::<Value>(&line) {
             Ok(request) => dispatch(request, &tx).await,
-            Err(e) => json!({ "error": format!("請求無法解析：{e}") }),
+            Err(e) => json!({ "error": format!("could not parse the request: {e}") }),
         };
-        writer.write_all(serde_json::to_string(&reply)?.as_bytes()).await?;
+        writer
+            .write_all(serde_json::to_string(&reply)?.as_bytes())
+            .await?;
         writer.write_all(b"\n").await?;
         writer.flush().await?;
     }
@@ -118,19 +123,21 @@ async fn dispatch(request: Value, tx: &UnboundedSender<Msg>) -> Value {
         "stop" => Control::Stop,
         "volume" => match request.get("level").and_then(Value::as_u64) {
             Some(level) => Control::Volume(level.min(100) as u8),
-            None => return json!({ "error": "volume 需要 0 到 100 的數字" }),
+            None => return json!({ "error": "volume takes a number from 0 to 100" }),
         },
         "remove" => Control::Remove(Some(target.trim().to_string())),
         "normalize" => match target.trim().to_ascii_lowercase().as_str() {
             "" | "toggle" => Control::Normalize(None),
             "on" | "1" | "true" => Control::Normalize(Some(true)),
             "off" | "0" | "false" => Control::Normalize(Some(false)),
-            other => return json!({ "error": format!("normalize 只接受 on、off 或 toggle，收到「{other}」") }),
+            other => {
+                return json!({ "error": format!("normalize takes on, off or toggle, not \"{other}\"") });
+            }
         },
         "radio" => match resolve(&target).await {
             Ok(seed) => match api::radio_with_seed(&seed, RADIO_LIMIT).await {
                 Ok(tracks) => Control::Replace {
-                    title: format!("電台：{}", seed.title),
+                    title: tf!("電台：{}", "Radio: {}", "ラジオ：{}", seed.title),
                     tracks,
                     start: 0,
                     seed: Some(seed),
@@ -141,7 +148,7 @@ async fn dispatch(request: Value, tx: &UnboundedSender<Msg>) -> Value {
         },
         "play" => match resolve(&target).await {
             Ok(video) => Control::Replace {
-                title: format!("點播：{}", video.title),
+                title: tf!("點播：{}", "Playing: {}", "再生：{}", video.title),
                 tracks: vec![video],
                 start: 0,
                 seed: None,
@@ -152,21 +159,23 @@ async fn dispatch(request: Value, tx: &UnboundedSender<Msg>) -> Value {
             Ok(video) => Control::Queue(vec![video]),
             Err(e) => return json!({ "error": e.to_string() }),
         },
-        other => return json!({ "error": format!("不認得的指令：{other}") }),
+        other => return json!({ "error": format!("unknown command: {other}") }),
     };
 
     let (reply_tx, reply_rx) = oneshot::channel();
-    if tx.send(Msg::Control {
-        control,
-        reply: reply_tx,
-    }).is_err()
+    if tx
+        .send(Msg::Control {
+            control,
+            reply: reply_tx,
+        })
+        .is_err()
     {
-        return json!({ "error": "播放器已經結束" });
+        return json!({ "error": "the player has exited" });
     }
 
     match reply_rx.await {
         Ok(value) => value,
-        Err(_) => json!({ "error": "播放器沒有回應" }),
+        Err(_) => json!({ "error": "the player did not answer" }),
     }
 }
 
@@ -174,22 +183,23 @@ async fn dispatch(request: Value, tx: &UnboundedSender<Msg>) -> Value {
 async fn resolve(target: &str) -> Result<Video> {
     let target = target.trim();
     if target.is_empty() {
-        return Err(anyhow!("需要影片 ID、網址或搜尋關鍵字"));
+        return Err(anyhow!("needs a video id, a url or search words"));
     }
 
     let looks_like_link = target.contains("youtu");
     let looks_like_id = !target.contains(char::is_whitespace) && target.len() == 11;
 
     if (looks_like_link || looks_like_id)
-        && let Some(id) = youtube::extract_id(target) {
-            return youtube::lookup(&id).await;
-        }
+        && let Some(id) = youtube::extract_id(target)
+    {
+        return youtube::lookup(&id).await;
+    }
 
     api::search(target, 5)
         .await?
         .into_iter()
         .next()
-        .ok_or_else(|| anyhow!("搜尋不到：{target}"))
+        .ok_or_else(|| anyhow!("nothing found for: {target}"))
 }
 
 /// 客戶端：連上播放器、送一個請求、取回一行回應。
@@ -197,16 +207,18 @@ pub async fn request(payload: Value) -> Result<Value> {
     let path = socket_path();
     let stream = UnixStream::connect(&path)
         .await
-        .map_err(|_| anyhow!("找不到執行中的播放器（{}）", path.display()))?;
+        .map_err(|_| anyhow!("no running player at {}", path.display()))?;
 
     let (reader, mut writer) = stream.into_split();
-    writer.write_all(serde_json::to_string(&payload)?.as_bytes()).await?;
+    writer
+        .write_all(serde_json::to_string(&payload)?.as_bytes())
+        .await?;
     writer.write_all(b"\n").await?;
     writer.flush().await?;
 
     let mut lines = BufReader::new(reader).lines();
     match lines.next_line().await? {
         Some(line) => Ok(serde_json::from_str(&line)?),
-        None => Err(anyhow!("播放器沒有回應")),
+        None => Err(anyhow!("the player did not answer")),
     }
 }

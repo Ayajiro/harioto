@@ -2,6 +2,7 @@
 //!
 //! 搜尋與解析都不需要申請任何金鑰。
 
+use crate::lang::t;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -35,10 +36,10 @@ pub async fn version() -> Result<String> {
         .arg("--version")
         .output()
         .await
-        .map_err(|_| anyhow!("找不到 yt-dlp，請先執行 brew install yt-dlp"))?;
+        .map_err(|_| anyhow!("yt-dlp is not installed; try brew install yt-dlp"))?;
 
     if !output.status.success() {
-        return Err(anyhow!("yt-dlp 無法執行"));
+        return Err(anyhow!("yt-dlp would not run"));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
@@ -89,15 +90,15 @@ pub async fn search(query: &str, limit: usize) -> Result<Vec<Video>> {
         ])
         .output()
         .await
-        .map_err(|_| anyhow!("找不到 yt-dlp，請先執行 brew install yt-dlp"))?;
+        .map_err(|_| anyhow!("yt-dlp is not installed; try brew install yt-dlp"))?;
 
     if !output.status.success() {
         return Err(anyhow!(
-            "搜尋失敗：{}",
+            "search failed: {}",
             String::from_utf8_lossy(&output.stderr)
                 .lines()
                 .next()
-                .unwrap_or("未知錯誤")
+                .unwrap_or("unknown error")
         ));
     }
 
@@ -121,15 +122,15 @@ pub async fn radio(video_id: &str, limit: usize) -> Result<Vec<Video>> {
         ])
         .output()
         .await
-        .map_err(|_| anyhow!("找不到 yt-dlp，請先執行 brew install yt-dlp"))?;
+        .map_err(|_| anyhow!("yt-dlp is not installed; try brew install yt-dlp"))?;
 
     if !output.status.success() {
         return Err(anyhow!(
-            "取得電台失敗：{}",
+            "could not build the radio: {}",
             String::from_utf8_lossy(&output.stderr)
                 .lines()
                 .last()
-                .unwrap_or("未知錯誤")
+                .unwrap_or("unknown error")
         ));
     }
 
@@ -154,28 +155,30 @@ pub async fn lookup(video_id: &str) -> Result<Video> {
         ])
         .output()
         .await
-        .map_err(|_| anyhow!("找不到 yt-dlp，請先執行 brew install yt-dlp"))?;
+        .map_err(|_| anyhow!("yt-dlp is not installed; try brew install yt-dlp"))?;
 
     if !output.status.success() {
         return Err(anyhow!(
-            "查詢影片失敗：{}",
+            "could not look up the video: {}",
             String::from_utf8_lossy(&output.stderr)
                 .lines()
                 .last()
-                .unwrap_or("未知錯誤")
+                .unwrap_or("unknown error")
         ));
     }
 
-    let entry: Entry =
-        serde_json::from_slice(&output.stdout).map_err(|e| anyhow!("結果無法解析：{e}"))?;
+    let entry: Entry = serde_json::from_slice(&output.stdout)
+        .map_err(|e| anyhow!("could not parse the result: {e}"))?;
     let id = entry.id.unwrap_or_else(|| video_id.to_string());
     Ok(Video {
         id,
-        title: entry.title.unwrap_or_else(|| "未知標題".into()),
+        title: entry
+            .title
+            .unwrap_or_else(|| t!("未知標題", "Untitled", "タイトル不明").into()),
         channel: entry
             .channel
             .or(entry.uploader)
-            .unwrap_or_else(|| "未知頻道".into()),
+            .unwrap_or_else(|| t!("未知頻道", "Unknown channel", "チャンネル不明").into()),
         duration_ms: entry.duration.map(|d| (d * 1000.0) as u32).unwrap_or(0),
     })
 }
@@ -206,7 +209,7 @@ pub fn extract_id(input: &str) -> Option<String> {
 
 fn parse_entries(stdout: &[u8]) -> Result<Vec<Video>> {
     let parsed: SearchResult =
-        serde_json::from_slice(stdout).map_err(|e| anyhow!("結果無法解析：{e}"))?;
+        serde_json::from_slice(stdout).map_err(|e| anyhow!("could not parse the result: {e}"))?;
 
     Ok(parsed
         .entries
@@ -216,8 +219,13 @@ fn parse_entries(stdout: &[u8]) -> Result<Vec<Video>> {
             let id = e.id?;
             Some(Video {
                 id,
-                title: e.title.unwrap_or_else(|| "未知標題".into()),
-                channel: e.channel.or(e.uploader).unwrap_or_else(|| "未知頻道".into()),
+                title: e
+                    .title
+                    .unwrap_or_else(|| t!("未知標題", "Untitled", "タイトル不明").into()),
+                channel: e
+                    .channel
+                    .or(e.uploader)
+                    .unwrap_or_else(|| t!("未知頻道", "Unknown channel", "チャンネル不明").into()),
                 duration_ms: e.duration.map(|d| (d * 1000.0) as u32).unwrap_or(0),
             })
         })
@@ -244,27 +252,27 @@ pub async fn download(video_id: &str, dest_dir: &std::path::Path) -> Result<std:
         .arg(format!("https://www.youtube.com/watch?v={video_id}"))
         .output()
         .await
-        .map_err(|_| anyhow!("找不到 yt-dlp"))?;
+        .map_err(|_| anyhow!("yt-dlp is not installed"))?;
 
     if !output.status.success() {
         return Err(anyhow!(
-            "下載失敗：{}",
+            "download failed: {}",
             String::from_utf8_lossy(&output.stderr)
                 .lines()
                 .last()
-                .unwrap_or("未知錯誤")
+                .unwrap_or("unknown error")
         ));
     }
 
     let mut entries = std::fs::read_dir(dest_dir)
-        .map_err(|e| anyhow!("讀取下載目錄失敗：{e}"))?
+        .map_err(|e| anyhow!("could not read the download directory: {e}"))?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.is_file());
 
     entries
         .next()
-        .ok_or_else(|| anyhow!("yt-dlp 沒有產生檔案"))
+        .ok_or_else(|| anyhow!("yt-dlp produced no file"))
 }
 
 /// 影片的標籤，給電台種子標示風格用。回傳已經過濾、最多三個。
@@ -283,10 +291,10 @@ pub async fn tags(video_id: &str, title: &str, channel: &str) -> Result<Vec<Stri
         ])
         .output()
         .await
-        .map_err(|_| anyhow!("找不到 yt-dlp，請先執行 brew install yt-dlp"))?;
+        .map_err(|_| anyhow!("yt-dlp is not installed; try brew install yt-dlp"))?;
 
     if !output.status.success() {
-        return Err(anyhow!("查詢標籤失敗"));
+        return Err(anyhow!("could not look up the tags"));
     }
 
     #[derive(serde::Deserialize)]
@@ -295,8 +303,8 @@ pub async fn tags(video_id: &str, title: &str, channel: &str) -> Result<Vec<Stri
         tags: Vec<String>,
     }
 
-    let details: Details =
-        serde_json::from_slice(&output.stdout).map_err(|e| anyhow!("結果無法解析：{e}"))?;
+    let details: Details = serde_json::from_slice(&output.stdout)
+        .map_err(|e| anyhow!("could not parse the result: {e}"))?;
     Ok(pick_tags(&details.tags, title, channel))
 }
 

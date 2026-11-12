@@ -32,7 +32,9 @@ fn touch(path: &std::path::Path) {
         return;
     };
     let now = std::time::SystemTime::now();
-    let times = std::fs::FileTimes::new().set_accessed(now).set_modified(now);
+    let times = std::fs::FileTimes::new()
+        .set_accessed(now)
+        .set_modified(now);
     let _ = file.set_times(times);
 }
 
@@ -77,7 +79,7 @@ pub fn prune(limit: u64) -> u64 {
     }
 
     if freed > 0 {
-        log::info!("快取清理釋出 {:.0} MB", freed as f64 / 1_048_576.0);
+        log::info!("cache pruning freed {:.0} MB", freed as f64 / 1_048_576.0);
     }
     freed
 }
@@ -98,17 +100,18 @@ pub async fn ensure(video_id: &str) -> Result<PathBuf> {
 
     tokio::fs::create_dir_all(dir())
         .await
-        .map_err(|e| anyhow!("建立快取目錄失敗：{e}"))?;
+        .map_err(|e| anyhow!("could not create the cache directory: {e}"))?;
 
     // 下載到獨立的暫存目錄再搬進快取，避免中斷留下半截檔案被當成完整快取。
-    let temp_dir = tempfile::tempdir().map_err(|e| anyhow!("建立暫存目錄失敗：{e}"))?;
+    let temp_dir =
+        tempfile::tempdir().map_err(|e| anyhow!("could not create a temporary directory: {e}"))?;
     let produced = crate::youtube::download(video_id, temp_dir.path()).await?;
 
     if tokio::fs::rename(&produced, &final_path).await.is_err() {
         // 跨檔案系統時改用複製。
         tokio::fs::copy(&produced, &final_path)
             .await
-            .map_err(|e| anyhow!("寫入快取失敗：{e}"))?;
+            .map_err(|e| anyhow!("could not write to the cache: {e}"))?;
     }
 
     tokio::task::spawn_blocking(|| prune(LIMIT_BYTES));

@@ -8,6 +8,7 @@
 //!
 //! 存檔之後畫面會在 0.25 秒內跟著變，不必重開播放器。
 
+use crate::lang::Lang;
 use ratatui::style::Color;
 use ratatui::widgets::BorderType;
 use serde::Deserialize;
@@ -69,6 +70,8 @@ pub struct Theme {
     pub border: Border,
     /// 要不要畫專輯縮圖。終端機支援與否是另一回事，這是使用者的意願。
     pub cover: bool,
+    /// 設定檔指定的介面語言，沒寫就由命令列或環境變數決定。
+    pub lang: Option<Lang>,
 }
 
 impl Default for Theme {
@@ -91,6 +94,7 @@ pub fn preset(name: &str) -> Theme {
             gauge_track: Color::DarkGray,
             border: Border::Plain,
             cover: true,
+            lang: None,
         },
         "light" => Theme {
             accent: Color::Rgb(176, 48, 48),
@@ -103,6 +107,7 @@ pub fn preset(name: &str) -> Theme {
             gauge_track: Color::Rgb(215, 215, 215),
             border: Border::Rounded,
             cover: true,
+            lang: None,
         },
         _ => Theme {
             accent: Color::Rgb(255, 72, 72),
@@ -115,6 +120,7 @@ pub fn preset(name: &str) -> Theme {
             gauge_track: Color::Rgb(40, 40, 40),
             border: Border::Rounded,
             cover: true,
+            lang: None,
         },
     }
 }
@@ -126,6 +132,8 @@ struct File {
     border: Option<Border>,
     /// 關掉就不畫專輯縮圖，也不替它留位置。
     cover: Option<bool>,
+    /// 介面語言：zh、en、ja。
+    lang: Option<String>,
     /// 終端機主題檔：路徑，或放在已知目錄裡的名稱。
     palette: Option<String>,
     #[serde(default)]
@@ -184,7 +192,10 @@ fn read_palette(path: &std::path::Path) -> Option<Palette> {
 fn parse_palette(text: &str) -> Option<Palette> {
     if let Ok(json) = serde_json::from_str::<JsonPalette>(text) {
         if json.ansi.len() < 16 {
-            log::warn!("主題檔的 ansi 只有 {} 色，需要 16 色", json.ansi.len());
+            log::warn!(
+                "the palette lists {} ansi colours, 16 are needed",
+                json.ansi.len()
+            );
             return None;
         }
         let mut ansi = [Color::Reset; 16];
@@ -334,7 +345,7 @@ pub fn load(override_preset: Option<&str>) -> Theme {
         .and_then(|text| match serde_json::from_str(&text) {
             Ok(parsed) => Some(parsed),
             Err(e) => {
-                log::warn!("主題檔讀不懂，先用預設：{e}");
+                log::warn!("the theme file could not be read, falling back to the preset: {e}");
                 None
             }
         })
@@ -352,17 +363,17 @@ pub fn load(override_preset: Option<&str>) -> Theme {
         if name.eq_ignore_ascii_case("auto") {
             let found = detected();
             if found.is_none() {
-                log::warn!("終端機沒有回答配色查詢，先用內建主題");
+                log::warn!("the terminal answered no colour query, falling back to the preset");
             }
             return found;
         }
         let Some(path) = resolve_palette(name) else {
-            log::warn!("找不到終端機主題檔：{name}");
+            log::warn!("no terminal theme called {name}");
             return None;
         };
         let found = read_palette(&path);
         if found.is_none() {
-            log::warn!("終端機主題檔看不懂：{}", path.display());
+            log::warn!("could not read the terminal theme at {}", path.display());
         }
         found
     });
@@ -376,9 +387,15 @@ pub fn load(override_preset: Option<&str>) -> Theme {
     if let Some(cover) = file.cover {
         theme.cover = cover;
     }
+    if let Some(name) = file.lang.as_deref() {
+        match Lang::parse(name) {
+            Some(lang) => theme.lang = Some(lang),
+            None => log::warn!("theme file names an unknown language: {name}"),
+        }
+    }
     for (role, value) in &file.colors {
         let Some(color) = parse_role_color(value, palette.as_ref()) else {
-            log::warn!("主題的 {role} 寫了看不懂的色值：{value}");
+            log::warn!("the theme gives {role} an unreadable colour: {value}");
             continue;
         };
         match role.as_str() {
@@ -390,7 +407,7 @@ pub fn load(override_preset: Option<&str>) -> Theme {
             "selection_bg" => theme.selection_bg = color,
             "selection_fg" => theme.selection_fg = color,
             "gauge_track" => theme.gauge_track = color,
-            other => log::warn!("主題裡有不認得的角色：{other}"),
+            other => log::warn!("the theme names an unknown role: {other}"),
         }
     }
 
