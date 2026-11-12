@@ -12,18 +12,38 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    let area = frame.area();
+    let compact = area.height < COMPACT_BELOW;
+    let editing = app.mode != Mode::Browse;
+    let rows = split_rows(area, compact, editing);
+
+    if rows[0].height > 0 {
+        draw_input(frame, app, rows[0], compact);
+    }
+    draw_lists(frame, app, rows[1]);
+    draw_now_playing(frame, app, rows[2], compact);
+    draw_status(frame, app, rows[3]);
+}
+
+/// 低於這個高度就改用精簡版面：搜尋框只在輸入時出現，播放中不畫外框。
+const COMPACT_BELOW: u16 = 18;
+
+/// 四個區塊的位置。抽出來是為了能單獨驗算高度分配。
+fn split_rows(area: Rect, compact: bool, editing: bool) -> [Rect; 4] {
+    let input = match (compact, editing) {
+        (false, _) => 3,
+        (true, true) => 1,
+        (true, false) => 0,
+    };
+    let now = if compact { 2 } else { 4 };
     let rows = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(3),
-        Constraint::Length(4),
+        Constraint::Length(input),
+        Constraint::Min(2),
+        Constraint::Length(now),
         Constraint::Length(1),
     ])
-    .split(frame.area());
-
-    draw_input(frame, app, rows[0]);
-    draw_lists(frame, app, rows[1]);
-    draw_now_playing(frame, app, rows[2]);
-    draw_status(frame, app, rows[3]);
+    .split(area);
+    [rows[0], rows[1], rows[2], rows[3]]
 }
 
 /// 面板外框。主題設成無框時只留標題，省下四行高度。
@@ -48,7 +68,7 @@ fn panel<'a>(theme: &Theme, title: &'a str, focused: bool) -> Block<'a> {
     }
 }
 
-fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_input(frame: &mut Frame, app: &App, area: Rect, compact: bool) {
     let editing = app.mode != Mode::Browse;
     let title = match app.mode {
         Mode::NewPlaylist => "新增歌單",
@@ -65,6 +85,20 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         Style::default().fg(theme.dim)
     };
+    if compact {
+        // 精簡版面只有一行，用標題當前綴，省下外框的兩行。
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    format!(" {title} "),
+                    Style::default().fg(theme.on_accent).bg(theme.accent),
+                ),
+                Span::styled(format!(" {text}"), style),
+            ])),
+            area,
+        );
+        return;
+    }
     frame.render_widget(
         Paragraph::new(Span::styled(text, style)).block(panel(theme, title, editing)),
         area,
@@ -134,11 +168,16 @@ fn draw_lists(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_stateful_widget(tracks, columns[1], &mut app.track_state);
 }
 
-fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, compact: bool) {
     let theme = &app.theme;
-    let block = panel(theme, "播放中", false);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = if compact {
+        area
+    } else {
+        let block = panel(theme, "播放中", false);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        inner
+    };
 
     let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(inner);
 
@@ -322,6 +361,32 @@ fn truncate(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::layout::Rect;
+
+    fn rows_at(height: u16, compact: bool, editing: bool) -> [u16; 4] {
+        let area = Rect::new(0, 0, 144, height);
+        split_rows(area, compact, editing)
+            .map(|rect| rect.height)
+    }
+
+    #[test]
+    fn a_short_pane_gives_the_lists_what_the_frames_took() {
+        let roomy = rows_at(14, false, false);
+        let compact = rows_at(14, true, false);
+        assert_eq!(roomy, [3, 6, 4, 1]);
+        assert_eq!(compact, [0, 11, 2, 1]);
+        assert!(compact[1] > roomy[1] + 4, "清單沒有拿到足夠的行數");
+    }
+
+    #[test]
+    fn typing_brings_the_search_line_back() {
+        assert_eq!(rows_at(14, true, true), [1, 10, 2, 1]);
+    }
+
+    #[test]
+    fn a_tall_pane_keeps_the_full_layout() {
+        assert_eq!(rows_at(30, false, false), [3, 22, 4, 1]);
+    }
 
     #[test]
     fn wide_screens_show_every_hint() {
