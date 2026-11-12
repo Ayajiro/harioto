@@ -423,56 +423,49 @@ const STATUS_MIN: usize = 24;
 /// 提示的數量。三種語言共用同一份順序，所以長度固定。
 const HINT_COUNT: usize = 14;
 
-/// 按鍵提示。窄畫面時從列表尾端開始捨棄，排在後面的先丟。
-fn hints() -> [&'static str; HINT_COUNT] {
+/// 按鍵本身不翻譯，而且和動作分開上色，英文介面才看得出哪一段是要按的。
+const HINT_KEYS: [&str; HINT_COUNT] = [
+    "/", "Enter", "Space", "n", "q", "r", "Tab", "+-", "←→", "g", "a", "d", "N", "i",
+];
+
+/// 每個按鍵做的事。順序和 HINT_KEYS 一致。
+fn hint_actions() -> [&'static str; HINT_COUNT] {
     match crate::lang::current() {
         crate::lang::Lang::Zh => [
-            "/搜尋",
-            "Enter播放",
-            "空白鍵暫停",
-            "n下一首",
-            "q離開",
-            "r電台",
-            "Tab切換",
-            "+-音量",
-            "←→快轉",
-            "g平衡",
-            "a加入",
-            "d移除",
-            "N新歌單",
-            "i縮圖",
+            "搜尋",
+            "播放",
+            "暫停",
+            "下一首",
+            "離開",
+            "電台",
+            "切換",
+            "音量",
+            "快轉",
+            "平衡",
+            "加入",
+            "移除",
+            "新歌單",
+            "縮圖",
         ],
         crate::lang::Lang::En => [
-            "/ search",
-            "Enter play",
-            "Space pause",
-            "n next",
-            "q quit",
-            "r radio",
-            "Tab switch",
-            "+- volume",
-            "←→ seek",
-            "g balance",
-            "a add",
-            "d drop",
-            "N playlist",
-            "i cover",
+            "search", "play", "pause", "next", "quit", "radio", "switch", "volume", "seek",
+            "balance", "add", "drop", "playlist", "cover",
         ],
         crate::lang::Lang::Ja => [
-            "/検索",
-            "Enter再生",
-            "Space一時停止",
-            "n次へ",
-            "q終了",
-            "rラジオ",
-            "Tab切替",
-            "+-音量",
-            "←→シーク",
-            "gバランス",
-            "a追加",
-            "d削除",
-            "N新規",
-            "iサムネ",
+            "検索",
+            "再生",
+            "一時停止",
+            "次へ",
+            "終了",
+            "ラジオ",
+            "切替",
+            "音量",
+            "シーク",
+            "バランス",
+            "追加",
+            "削除",
+            "新規",
+            "サムネ",
         ],
     }
 }
@@ -480,33 +473,62 @@ fn hints() -> [&'static str; HINT_COUNT] {
 /// 提示列的顯示順序，和捨棄順序分開，讓畫面上的排列維持穩定。
 const HINT_ORDER: [usize; HINT_COUNT] = [0, 5, 12, 10, 11, 6, 1, 2, 3, 8, 7, 9, 13, 4];
 
-/// 在給定寬度下挑出放得進去的提示，回傳排好的字串。
-fn hint_line(width: usize) -> String {
-    let hints = hints();
+/// 一項提示佔的寬度：前面兩格間隔、按鍵、一格、動作。
+fn hint_width(key: &str, action: &str) -> usize {
+    2 + key.width() + 1 + action.width()
+}
+
+/// 在給定寬度下挑出放得進去的提示，依顯示順序排好。
+fn kept_hints(width: usize) -> Vec<(&'static str, &'static str)> {
+    let actions = hint_actions();
     let mut keep = [true; HINT_COUNT];
     loop {
-        let text = compose_hints(&hints, &keep);
-        if text.width() <= width {
-            return text;
+        let used: usize = HINT_ORDER
+            .iter()
+            .filter(|&&index| keep[index])
+            .map(|&index| hint_width(HINT_KEYS[index], actions[index]))
+            .sum();
+        if used <= width {
+            break;
         }
         // 從捨棄順序的尾端往前拿掉一項。
-        let Some(drop) = (0..HINT_COUNT).rev().find(|&i| keep[i]) else {
-            return String::new();
+        let Some(drop) = (0..HINT_COUNT).rev().find(|&index| keep[index]) else {
+            return Vec::new();
         };
         keep[drop] = false;
     }
+    HINT_ORDER
+        .iter()
+        .filter(|&&index| keep[index])
+        .map(|&index| (HINT_KEYS[index], actions[index]))
+        .collect()
 }
 
-fn compose_hints(hints: &[&str; HINT_COUNT], keep: &[bool; HINT_COUNT]) -> String {
+/// 提示列的純文字版本，給測試驗內容用。畫面走 `hint_spans`。
+#[cfg(test)]
+fn hint_line(width: usize) -> String {
     let mut out = String::new();
-    for &index in HINT_ORDER.iter() {
-        if !keep[index] {
-            continue;
-        }
+    for (key, action) in kept_hints(width) {
         out.push_str("  ");
-        out.push_str(hints[index]);
+        out.push_str(key);
+        out.push(' ');
+        out.push_str(action);
     }
     out
+}
+
+/// 畫面上的提示列：按鍵亮、動作暗，兩段分得開。
+fn hint_spans(width: usize, theme: &Theme) -> (Vec<Span<'static>>, usize) {
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for (key, action) in kept_hints(width) {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(key, Style::default().fg(theme.text)));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(action, Style::default().fg(theme.dim)));
+        used += hint_width(key, action);
+    }
+    (spans, used)
 }
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
@@ -518,28 +540,26 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         STATUS_MIN.min(message.width() + 2).min(total / 2)
     };
-    let hints = hint_line(total.saturating_sub(reserved));
-    let left = total.saturating_sub(hints.width());
+    let (hints, hints_width) = hint_spans(total.saturating_sub(reserved), &app.theme);
+    let left = total.saturating_sub(hints_width);
     let status = if message.is_empty() || left < 4 {
         String::new()
     } else {
         format!(" {} ", truncate(&message, left.saturating_sub(2)))
     };
-    let gap = total.saturating_sub(status.width() + hints.width());
+    let gap = total.saturating_sub(status.width() + hints_width);
 
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                status,
-                Style::default()
-                    .fg(app.theme.on_accent)
-                    .bg(app.theme.accent),
-            ),
-            Span::raw(" ".repeat(gap)),
-            Span::styled(hints, Style::default().fg(app.theme.dim)),
-        ])),
-        area,
-    );
+    let mut line = vec![
+        Span::styled(
+            status,
+            Style::default()
+                .fg(app.theme.on_accent)
+                .bg(app.theme.accent),
+        ),
+        Span::raw(" ".repeat(gap)),
+    ];
+    line.extend(hints);
+    frame.render_widget(Paragraph::new(Line::from(line)), area);
 }
 
 /// 依終端機顯示寬度截斷，中日韓文字算兩格。
@@ -666,8 +686,11 @@ mod tests {
     fn wide_screens_show_every_hint() {
         let _guard = in_chinese();
         let line = hint_line(400);
-        for hint in hints() {
-            assert!(line.contains(hint), "少了 {hint}");
+        for (key, action) in HINT_KEYS.iter().zip(hint_actions()) {
+            assert!(
+                line.contains(&format!("{key} {action}")),
+                "少了 {key} {action}"
+            );
         }
     }
 
@@ -676,9 +699,9 @@ mod tests {
         let _guard = in_chinese();
         let line = hint_line(30);
         assert!(line.width() <= 30, "寬度 {} 超過 30", line.width());
-        assert!(line.contains("/搜尋"));
-        assert!(line.contains("Enter播放"));
-        assert!(!line.contains("N新歌單"));
+        assert!(line.contains("/ 搜尋"));
+        assert!(line.contains("Enter 播放"));
+        assert!(!line.contains("N 新歌單"));
     }
 
     #[test]
@@ -691,9 +714,9 @@ mod tests {
         let ja = hint_line(400);
         crate::lang::set(crate::lang::Lang::Zh);
 
-        assert!(zh.contains("/搜尋"));
+        assert!(zh.contains("/ 搜尋"));
         assert!(en.contains("/ search"), "英文提示：{en}");
-        assert!(ja.contains("/検索"), "日文提示：{ja}");
+        assert!(ja.contains("/ 検索"), "日文提示：{ja}");
     }
 
     #[test]
@@ -705,8 +728,8 @@ mod tests {
     fn hints_keep_their_display_order_whatever_is_dropped() {
         let _guard = in_chinese();
         let line = hint_line(60);
-        let search = line.find("/搜尋").expect("搜尋在列");
-        let quit = line.find("q離開");
+        let search = line.find("/ 搜尋").expect("搜尋在列");
+        let quit = line.find("q 離開");
         if let Some(quit) = quit {
             assert!(search < quit, "順序不對：{line}");
         }
