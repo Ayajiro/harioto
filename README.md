@@ -76,7 +76,7 @@ Calls read and write the same files the player uses and never touch a running in
 | `r` | Start a radio from the playing track, or the selected one |
 | `N` | New playlist |
 | `a` | Add the selected track to the selected playlist |
-| `d` | Remove the selected track from the open playlist |
+| `d` | Drop the selected track: from the open playlist, or from the queue a radio or search built |
 | `Tab` | Switch focus between playlists and tracks |
 | `j` `k` / arrows | Move the selection |
 | `PageUp` `PageDown` `Home` `End` | Jump through the list |
@@ -100,6 +100,7 @@ harioto ctl queue <id|query>      # append to the current queue
 harioto ctl pause | resume | toggle | next | prev | stop
 harioto ctl volume 40
 harioto ctl normalize on | off | toggle
+harioto ctl remove [id]           # drop a track from the queue, default the playing one
 harioto ctl status --json
 ```
 

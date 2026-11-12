@@ -27,6 +27,8 @@ pub enum Control {
     Volume(u8),
     /// 響度平衡：Some(true) 開、Some(false) 關、None 切換。
     Normalize(Option<bool>),
+    /// 從目前清單拿掉一首：給影片 ID，或不給表示正在播的那首。
+    Remove(Option<String>),
     /// 換掉右欄的清單並從 start 開始播。
     Replace {
         title: String,
@@ -118,6 +120,7 @@ async fn dispatch(request: Value, tx: &UnboundedSender<Msg>) -> Value {
             Some(level) => Control::Volume(level.min(100) as u8),
             None => return json!({ "error": "volume 需要 0 到 100 的數字" }),
         },
+        "remove" => Control::Remove(Some(target.trim().to_string())),
         "normalize" => match target.trim().to_ascii_lowercase().as_str() {
             "" | "toggle" => Control::Normalize(None),
             "on" | "1" | "true" => Control::Normalize(Some(true)),

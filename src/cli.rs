@@ -33,6 +33,7 @@ harioto — 終端機裡的電台
   harioto ctl next | prev | stop            下一首、上一首、停止
   harioto ctl volume <0-100>                音量
   harioto ctl normalize on|off|toggle       響度平衡的開關
+  harioto ctl remove [影片ID]               從清單拿掉一首，不給就是正在播的那首
 
 選項：
   --json     以 JSON 輸出，給程式讀
@@ -168,7 +169,7 @@ pub async fn dispatch(args: &[String]) -> Option<Result<()>> {
 async fn ctl(ops: &[String], rest: &[String], json: bool) -> Result<()> {
     let Some(command) = ops.first().cloned() else {
         return fail(
-            "用法：harioto ctl <status|play|radio|queue|pause|resume|toggle|next|prev|stop|volume|normalize>".into(),
+            "用法：harioto ctl <status|play|radio|queue|pause|resume|toggle|next|prev|stop|volume|normalize|remove>".into(),
             json,
         );
     };

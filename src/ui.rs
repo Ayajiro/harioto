@@ -365,8 +365,7 @@ mod tests {
 
     fn rows_at(height: u16, compact: bool, editing: bool) -> [u16; 4] {
         let area = Rect::new(0, 0, 144, height);
-        split_rows(area, compact, editing)
-            .map(|rect| rect.height)
+        split_rows(area, compact, editing).map(|rect| rect.height)
     }
 
     #[test]

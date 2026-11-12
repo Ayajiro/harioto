@@ -411,6 +411,17 @@ impl App {
                 self.status = "已停止（來自控制通道）".into();
                 "stop"
             }
+            Control::Remove(target) => {
+                let index = match target.as_deref() {
+                    None | Some("") => self.playing_index,
+                    Some(id) => self.tracks.iter().position(|track| track.id == id),
+                };
+                if index.is_none() {
+                    return serde_json::json!({ "error": "這首不在目前的清單裡" });
+                }
+                self.drop_from_queue(index);
+                "remove"
+            }
             Control::Normalize(wanted) => {
                 self.normalize = wanted.unwrap_or(!self.normalize);
                 self.apply_gain();
@@ -576,6 +587,51 @@ impl App {
             }
             Err(e) => self.status = e.to_string(),
         }
+    }
+
+    /// `d` 的入口：歌單檢視從歌單刪掉，電台或搜尋結果則從目前的清單拿掉。
+    fn remove_selected(&mut self) {
+        match self.view {
+            View::Playlist(_) => self.remove_from_playlist(),
+            View::Search => {
+                let index = self.track_state.selected();
+                self.drop_from_queue(index);
+            }
+        }
+    }
+
+    /// 從目前清單拿掉一首。正在播的那首被拿掉時，原位就是下一首，直接接著播。
+    fn drop_from_queue(&mut self, index: Option<usize>) {
+        let Some(index) = index else {
+            self.set_status("沒有選到曲目".into());
+            return;
+        };
+        let Some(track) = self.tracks.get(index).cloned() else {
+            return;
+        };
+        self.tracks.remove(index);
+
+        match self.playing_index {
+            Some(current) if current == index => {
+                if index < self.tracks.len() {
+                    self.play_index(index);
+                } else {
+                    self.audio.stop();
+                    self.now = None;
+                    self.playing_index = None;
+                }
+            }
+            Some(current) if current > index => self.playing_index = Some(current - 1),
+            _ => {}
+        }
+
+        if self.tracks.is_empty() {
+            self.track_state.select(None);
+        } else {
+            self.track_state
+                .select(Some(index.min(self.tracks.len() - 1)));
+        }
+        self.set_status(format!("已從清單移除：{}", track.title));
     }
 
     fn remove_from_playlist(&mut self) {
@@ -1038,7 +1094,7 @@ impl App {
             KeyCode::Char('-') => self.change_volume(false),
             KeyCode::Char('r') => self.start_radio(),
             KeyCode::Char('a') => self.add_to_playlist(),
-            KeyCode::Char('d') => self.remove_from_playlist(),
+            KeyCode::Char('d') => self.remove_selected(),
             KeyCode::Char('s') => {
                 self.audio.stop();
                 self.now = None;
