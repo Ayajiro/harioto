@@ -127,20 +127,27 @@ fn list_columns(area: Rect, narrow: bool, focus: Focus) -> [Option<Rect>; 2] {
     [Some(columns[0]), Some(columns[1])]
 }
 
-/// 縮圖面板的高度，含上下框線。
-const COVER_ROWS: u16 = 12;
+/// 縮圖面板最多這麼高，含上下框線。再高就只是放大同一張圖。
+const COVER_MAX: u16 = 12;
 
-/// 歌單至少要留這麼多列，縮圖才有資格佔走底下那一塊。
-const PLAYLIST_MIN_ROWS: u16 = 6;
+/// 低於這個高度圖會小到看不出是什麼，不如把列數還給歌單。
+const COVER_MIN: u16 = 6;
 
-/// 左欄的分配。放得下就切一塊給縮圖，放不下就整欄給歌單。
+/// 歌單至少要留這麼多列。
+const PLAYLIST_MIN_ROWS: u16 = 4;
+
+/// 左欄的分配。歌單先拿它的底線，剩下的給縮圖，不夠就整欄給歌單。
 fn split_left(area: Rect, wanted: bool) -> (Rect, Option<Rect>) {
-    if !wanted || area.height < COVER_ROWS + PLAYLIST_MIN_ROWS {
+    if !wanted {
+        return (area, None);
+    }
+    let spare = area.height.saturating_sub(PLAYLIST_MIN_ROWS);
+    if spare < COVER_MIN {
         return (area, None);
     }
     let rows = Layout::vertical([
         Constraint::Min(PLAYLIST_MIN_ROWS),
-        Constraint::Length(COVER_ROWS),
+        Constraint::Length(spare.min(COVER_MAX)),
     ])
     .split(area);
     (rows[0], Some(rows[1]))
@@ -542,14 +549,22 @@ mod tests {
     fn the_cover_takes_the_bottom_of_the_left_column() {
         let column = Rect::new(0, 0, 40, 22);
         let (playlists, cover) = split_left(column, true);
-        assert_eq!(cover.map(|r| r.height), Some(COVER_ROWS));
-        assert_eq!(playlists.height, 22 - COVER_ROWS);
-        assert_eq!(cover.map(|r| r.y), Some(22 - COVER_ROWS));
+        assert_eq!(cover.map(|r| r.height), Some(COVER_MAX));
+        assert_eq!(playlists.height, 22 - COVER_MAX);
+        assert_eq!(cover.map(|r| r.y), Some(22 - COVER_MAX));
+    }
+
+    #[test]
+    fn a_tight_column_still_gets_a_smaller_cover() {
+        // 歌單拿走 4 列之後剩 7 列，縮圖就用這 7 列。
+        let (playlists, cover) = split_left(Rect::new(0, 0, 40, 11), true);
+        assert_eq!(playlists.height, PLAYLIST_MIN_ROWS);
+        assert_eq!(cover.map(|r| r.height), Some(7));
     }
 
     #[test]
     fn a_short_column_keeps_every_row_for_the_playlists() {
-        let column = Rect::new(0, 0, 40, COVER_ROWS + PLAYLIST_MIN_ROWS - 1);
+        let column = Rect::new(0, 0, 40, COVER_MIN + PLAYLIST_MIN_ROWS - 1);
         let (playlists, cover) = split_left(column, true);
         assert!(cover.is_none(), "放不下就不切");
         assert_eq!(playlists.height, column.height);
