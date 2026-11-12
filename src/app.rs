@@ -970,7 +970,8 @@ impl App {
             paused: false,
             buffering: true,
         });
-        self.apply_gain();
+        // 增益要等新的檔案真的接上去才改。這時候上一首可能還在響，
+        // 先換增益會讓它突然變大或變小。
         self.load_cover(video.id.clone());
 
         let tx = self.tx.clone();
@@ -1232,8 +1233,9 @@ impl App {
                     now.position_ms = 0;
                     now.marked_at = Instant::now();
                 }
-                self.audio.load(path);
+                // 先把增益備好再載入，新的一首從第一個取樣點就是對的音量。
                 self.apply_gain();
+                self.audio.load(path);
                 if !self.loudness.contains_key(&video_id) {
                     spawn_measure(self.tx.clone(), video_id, path_for_measure);
                 }
