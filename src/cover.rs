@@ -60,13 +60,28 @@ pub async fn ensure(video_id: &str) -> Result<PathBuf> {
 
     // mqdefault 是 320x180，沒有上下黑邊，省得自己裁掉。
     let url = format!("https://i.ytimg.com/vi/{video_id}/mqdefault.jpg");
-    let bytes = reqwest::get(&url)
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
     let part = dir.join(format!("{video_id}.part"));
-    tokio::fs::write(&part, &bytes).await?;
+
+    // 用 curl 而不是在程式裡內建 HTTP 客戶端：一張縮圖不值得把整套 TLS 與
+    // HTTP/2 連進執行檔，那會讓檔案大一倍。
+    let output = tokio::process::Command::new("curl")
+        .args(["--silent", "--show-error", "--fail", "--location"])
+        .args(["--max-time", "15", "--output"])
+        .arg(&part)
+        .arg(&url)
+        .output()
+        .await
+        .map_err(|_| anyhow!("curl is not available"))?;
+
+    if !output.status.success() {
+        let _ = tokio::fs::remove_file(&part).await;
+        let reason = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "curl could not fetch the thumbnail: {}",
+            reason.trim()
+        ));
+    }
+
     tokio::fs::rename(&part, &path).await?;
     Ok(path)
 }
