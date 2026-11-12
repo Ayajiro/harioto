@@ -266,3 +266,91 @@ pub async fn download(video_id: &str, dest_dir: &std::path::Path) -> Result<std:
         .next()
         .ok_or_else(|| anyhow!("yt-dlp 沒有產生檔案"))
 }
+
+/// 影片的標籤，給電台種子標示風格用。回傳已經過濾、最多三個。
+///
+/// 標籤是上傳者自己填的，常混著「Official Music Video」這類和風格無關的字串，
+/// 也常把曲名與頻道名再寫一次，所以這裡只留下畫面上還沒出現過的那些。
+pub async fn tags(video_id: &str, title: &str, channel: &str) -> Result<Vec<String>> {
+    let output = Command::new("yt-dlp")
+        .args([
+            "--no-warnings",
+            "--ignore-config",
+            "--no-playlist",
+            "--skip-download",
+            "-J",
+            &watch_url(video_id),
+        ])
+        .output()
+        .await
+        .map_err(|_| anyhow!("找不到 yt-dlp，請先執行 brew install yt-dlp"))?;
+
+    if !output.status.success() {
+        return Err(anyhow!("查詢標籤失敗"));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Details {
+        #[serde(default)]
+        tags: Vec<String>,
+    }
+
+    let details: Details =
+        serde_json::from_slice(&output.stdout).map_err(|e| anyhow!("結果無法解析：{e}"))?;
+    Ok(pick_tags(&details.tags, title, channel))
+}
+
+/// 擋掉和曲名、頻道重複的標籤，以及純粹描述影片型態的字眼。
+fn pick_tags(tags: &[String], title: &str, channel: &str) -> Vec<String> {
+    const NOISE: [&str; 8] = [
+        "official",
+        "music video",
+        "mv",
+        "lyric",
+        "audio",
+        "hd",
+        "live",
+        "full album",
+    ];
+    let title = title.to_lowercase();
+    let channel = channel.to_lowercase();
+
+    tags.iter()
+        .map(|tag| tag.trim())
+        .filter(|tag| !tag.is_empty() && tag.chars().count() <= 24)
+        .filter(|tag| {
+            let lower = tag.to_lowercase();
+            if title.contains(&lower) || channel.contains(&lower) || lower.contains(&channel) {
+                return false;
+            }
+            !NOISE.iter().any(|noise| lower.contains(noise))
+        })
+        .take(3)
+        .map(|tag| tag.to_string())
+        .collect()
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use super::pick_tags;
+
+    #[test]
+    fn keeps_style_words_and_drops_the_rest() {
+        let tags = [
+            "plastic love",
+            "mariya takeuchi",
+            "city pop",
+            "Official Music Video",
+            "Tatsuro Yamashita",
+            "竹内まりや",
+        ]
+        .map(String::from);
+        let picked = pick_tags(&tags, "竹内まりや - Plastic Love", "Mariya Takeuchi");
+        assert_eq!(picked, vec!["city pop", "Tatsuro Yamashita"]);
+    }
+
+    #[test]
+    fn an_empty_list_stays_empty() {
+        assert!(pick_tags(&[], "曲名", "頻道").is_empty());
+    }
+}

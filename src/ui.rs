@@ -265,17 +265,18 @@ fn compose_hints(keep: &[bool; HINTS.len()]) -> String {
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     let total = area.width as usize;
     // 提示先取得空間，但替狀態訊息留一塊，兩邊都不會被完全擠掉。
-    let reserved = if app.status.is_empty() {
+    let reserved = if app.context_line().is_empty() {
         0
     } else {
         STATUS_MIN.min(total / 2)
     };
     let hints = hint_line(total.saturating_sub(reserved));
     let left = total.saturating_sub(hints.width());
-    let status = if app.status.is_empty() || left < 4 {
+    let message = app.context_line();
+    let status = if message.is_empty() || left < 4 {
         String::new()
     } else {
-        format!(" {} ", truncate(&app.status, left.saturating_sub(2)))
+        format!(" {} ", truncate(&message, left.saturating_sub(2)))
     };
     let gap = total.saturating_sub(status.width() + hints.width());
 

@@ -13,7 +13,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
-const RADIO_LIMIT: usize = 60;
+const RADIO_LIMIT: usize = 100;
 
 /// 送進畫面的控制指令，資料都已經備好。
 pub enum Control {
@@ -25,11 +25,15 @@ pub enum Control {
     Prev,
     Stop,
     Volume(u8),
+    /// 響度平衡：Some(true) 開、Some(false) 關、None 切換。
+    Normalize(Option<bool>),
     /// 換掉右欄的清單並從 start 開始播。
     Replace {
         title: String,
         tracks: Vec<Video>,
         start: usize,
+        /// 這份清單的電台種子，沒有就是點播或搜尋結果。
+        seed: Option<Video>,
     },
     /// 接在目前清單後面。
     Queue(Vec<Video>),
@@ -114,12 +118,19 @@ async fn dispatch(request: Value, tx: &UnboundedSender<Msg>) -> Value {
             Some(level) => Control::Volume(level.min(100) as u8),
             None => return json!({ "error": "volume 需要 0 到 100 的數字" }),
         },
+        "normalize" => match target.trim().to_ascii_lowercase().as_str() {
+            "" | "toggle" => Control::Normalize(None),
+            "on" | "1" | "true" => Control::Normalize(Some(true)),
+            "off" | "0" | "false" => Control::Normalize(Some(false)),
+            other => return json!({ "error": format!("normalize 只接受 on、off 或 toggle，收到「{other}」") }),
+        },
         "radio" => match resolve(&target).await {
             Ok(seed) => match api::radio_with_seed(&seed, RADIO_LIMIT).await {
                 Ok(tracks) => Control::Replace {
                     title: format!("電台：{}", seed.title),
                     tracks,
                     start: 0,
+                    seed: Some(seed),
                 },
                 Err(e) => return json!({ "error": e.to_string() }),
             },
@@ -130,6 +141,7 @@ async fn dispatch(request: Value, tx: &UnboundedSender<Msg>) -> Value {
                 title: format!("點播：{}", video.title),
                 tracks: vec![video],
                 start: 0,
+                seed: None,
             },
             Err(e) => return json!({ "error": e.to_string() }),
         },

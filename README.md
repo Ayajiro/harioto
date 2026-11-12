@@ -99,6 +99,7 @@ harioto ctl play <id|query>       # play one track now
 harioto ctl queue <id|query>      # append to the current queue
 harioto ctl pause | resume | toggle | next | prev | stop
 harioto ctl volume 40
+harioto ctl normalize on | off | toggle
 harioto ctl status --json
 ```
 
@@ -117,6 +118,7 @@ A target that looks like a video id or a YouTube URL is fetched directly; anythi
 | `volume` | 0–100 |
 | `normalize` | Whether loudness balance is on |
 | `gain_db` | The gain it applies to the current track |
+| `seed` | The radio's seed — id, title, channel and style tags — or null |
 
 `index` counts the queue the player built when the radio started, and it climbs on its own as tracks end — leave a player running for an hour and it has moved a dozen places. `harioto radio <id>` asks YouTube again and returns a fresh list whose order need not match that queue, so holding the two side by side says nothing about where the player is. `status` is the only answer to that question.
 
@@ -151,6 +153,8 @@ The palette fills the roles — text from the foreground, muted and dim from ans
 The file is re-read within a quarter of a second of being saved, so a colour edit lands without restarting the player. A file that does not parse is ignored, with the reason in the log.
 
 ## Radio
+
+The status line, bottom left, carries whatever just happened — a volume change, a theme reload, an error — and after eight seconds falls back to the radio's seed: the channel it came from, and up to three style tags taken from the seed's own YouTube tags, with the ones that merely repeat the title or describe the video dropped. The key hints are laid out from the right and keep their place; a narrow pane drops the least-used ones rather than cutting the line.
 
 `r` takes the current track as a seed and loads the mix YouTube generates for it (`list=RD<videoID>`), up to 100 tracks in recommendation order. The seed keeps playing; the queue continues from it.
 

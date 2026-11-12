@@ -21,6 +21,8 @@ use tokio::sync::mpsc::UnboundedSender;
 
 const SEEK_STEP_MS: u32 = 5_000;
 const VOLUME_STEP: f32 = 0.05;
+/// 狀態訊息停留多久，之後換回電台種子資訊。
+const STATUS_HOLD: Duration = Duration::from_secs(8);
 const SEARCH_LIMIT: usize = 30;
 const RADIO_LIMIT: usize = 100;
 /// 超過這個長度就先攔下來確認，通常是合輯或直播而不是單曲。
@@ -37,8 +39,12 @@ pub enum Msg {
         tracks: Vec<Video>,
         /// 真：目前這首繼續放完，電台接在後面。
         continue_current: bool,
+        /// 這個電台的種子。
+        seed: Video,
     },
     Ready { video_id: String, path: PathBuf },
+    /// 種子的風格標籤查回來了。
+    SeedTags { video_id: String, tags: Vec<String> },
     /// 背景量測完一首的響度。
     Loudness {
         video_id: String,
@@ -115,6 +121,12 @@ pub struct App {
     pub normalize: bool,
     /// 已知的響度量測結果，開機時從檔案讀回來。
     loudness: HashMap<String, Measurement>,
+    /// 目前電台的種子，點播與搜尋結果沒有種子。
+    seed: Option<Video>,
+    /// 種子的風格標籤，查得到才有。
+    seed_tags: Vec<String>,
+    /// 狀態訊息寫進來的時間，過一陣子就換成種子資訊。
+    status_at: Instant,
     /// 目前的配色與框線。
     pub theme: Theme,
     /// `--theme` 指定的內建主題，重讀設定檔時仍然優先。
@@ -161,10 +173,68 @@ impl App {
             pending_confirm: None,
             normalize: true,
             loudness: loudness::load(),
+            seed: None,
+            seed_tags: Vec::new(),
+            status_at: Instant::now(),
             theme: crate::theme::load(theme_preset.as_deref()),
             theme_mtime: crate::theme::mtime(),
             theme_preset,
         }
+    }
+
+    /// 寫狀態訊息，並記下時間：訊息擺一陣子之後換成電台種子資訊。
+    fn set_status(&mut self, text: String) {
+        self.status = text;
+        self.status_at = Instant::now();
+    }
+
+    /// 記住這份清單的電台種子，並在背景查它的風格標籤。
+    fn remember_seed(&mut self, seed: Option<Video>) {
+        self.seed_tags.clear();
+        self.seed = seed.clone();
+        let Some(seed) = seed else {
+            return;
+        };
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            match youtube::tags(&seed.id, &seed.title, &seed.channel).await {
+                Ok(tags) if !tags.is_empty() => {
+                    let _ = tx.send(Msg::SeedTags {
+                        video_id: seed.id,
+                        tags,
+                    });
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("查種子標籤失敗：{e}"),
+            }
+        });
+    }
+
+    /// 響度平衡的狀態描述，開關與控制通道共用。
+    fn normalize_status(&self) -> String {
+        if !self.normalize {
+            "響度平衡：關".into()
+        } else if self.gain_ready() {
+            format!("響度平衡：開（這首 {:+.1} dB）", self.gain_db())
+        } else {
+            "響度平衡：開（這首還在量）".into()
+        }
+    }
+
+    /// 狀態列左側要顯示的字。剛發生的訊息優先，過了就換成電台種子。
+    pub fn context_line(&self) -> String {
+        if self.status_at.elapsed() < STATUS_HOLD && !self.status.is_empty() {
+            return self.status.clone();
+        }
+        let Some(seed) = self.seed.as_ref() else {
+            return self.status.clone();
+        };
+        let mut line = format!("電台種子：{}", seed.channel);
+        if !self.seed_tags.is_empty() {
+            line.push('・');
+            line.push_str(&self.seed_tags.join("、"));
+        }
+        line
     }
 
     /// 主題檔被改過就重讀，讓調色不必重開播放器。
@@ -232,6 +302,7 @@ impl App {
                     title,
                     tracks,
                     continue_current,
+                    seed,
                 },
                 Err(e) => Msg::Error(e.to_string()),
             };
@@ -276,6 +347,12 @@ impl App {
             "index": self.playing_index,
             "volume": self.volume_percent(),
             "normalize": self.normalize,
+            "seed": self.seed.as_ref().map(|seed| serde_json::json!({
+                "id": seed.id,
+                "title": seed.title,
+                "channel": seed.channel,
+                "tags": self.seed_tags,
+            })),
             "gain_db": (self.gain_db() * 10.0).round() / 10.0,
         })
     }
@@ -334,6 +411,13 @@ impl App {
                 self.status = "已停止（來自控制通道）".into();
                 "stop"
             }
+            Control::Normalize(wanted) => {
+                self.normalize = wanted.unwrap_or(!self.normalize);
+                self.apply_gain();
+                self.status = self.normalize_status();
+                self.status_at = Instant::now();
+                "normalize"
+            }
             Control::Volume(level) => {
                 self.audio.set_volume(level as f32 / 100.0);
                 self.status = format!("音量 {level}%（來自控制通道）");
@@ -343,6 +427,7 @@ impl App {
                 title,
                 tracks,
                 start,
+                seed,
             } => {
                 let (tracks, dropped) = Self::playable_only(tracks);
                 if tracks.is_empty() {
@@ -356,6 +441,7 @@ impl App {
                 let start = start.min(self.tracks.len() - 1);
                 self.track_state.select(Some(start));
                 self.play_index(start);
+                self.remember_seed(seed);
                 self.status = if dropped > 0 {
                     format!("清單共 {} 首（略過 {dropped} 首過長項目）", self.tracks.len())
                 } else {
@@ -657,13 +743,8 @@ impl App {
     fn toggle_normalize(&mut self) {
         self.normalize = !self.normalize;
         self.apply_gain();
-        self.status = if !self.normalize {
-            "響度平衡：關".into()
-        } else if self.gain_ready() {
-            format!("響度平衡：開（這首 {:+.1} dB）", self.gain_db())
-        } else {
-            "響度平衡：開（這首還在量）".into()
-        };
+        let text = self.normalize_status();
+        self.set_status(text);
     }
 
     /// 往前或往後換曲。自動接續時會跳過過長的曲目，避免卡在數小時的合輯上。
@@ -795,12 +876,14 @@ impl App {
                 title,
                 tracks,
                 continue_current,
+                seed,
             } => {
                 if tracks.len() < 2 {
                     self.status = "電台沒有回傳其他曲目".into();
                     return;
                 }
-                self.status = format!("電台接著還有 {} 首", tracks.len() - 1);
+                self.set_status(format!("電台接著還有 {} 首", tracks.len() - 1));
+                self.remember_seed(Some(seed));
                 self.track_title = title;
                 self.tracks = tracks;
                 self.view = View::Search;
@@ -836,6 +919,11 @@ impl App {
                     spawn_measure(self.tx.clone(), video_id, path_for_measure);
                 }
                 self.prefetch_next();
+            }
+            Msg::SeedTags { video_id, tags } => {
+                if self.seed.as_ref().is_some_and(|seed| seed.id == video_id) {
+                    self.seed_tags = tags;
+                }
             }
             Msg::Loudness {
                 video_id,
