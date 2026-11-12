@@ -10,7 +10,7 @@ pub const HELP: &str = "\
 harioto — 終端機裡的電台
 
 用法：
-  harioto                                   啟動播放器
+  harioto [--theme <名稱>]                   啟動播放器
   harioto search <關鍵字> [--limit N]        搜尋 YouTube
   harioto radio <影片ID或網址> [--limit N]    建立電台，種子排第一筆
   harioto playlist list                     列出歌單
@@ -36,6 +36,7 @@ harioto — 終端機裡的電台
 選項：
   --json     以 JSON 輸出，給程式讀
   --limit N  筆數上限
+  --theme    內建主題：ember、mono、light，覆寫 ~/.config/harioto/theme.json
 ";
 
 /// 找出 `--limit N`，沒給就用預設值。

@@ -10,6 +10,7 @@ mod history;
 mod loudness;
 mod mcp;
 mod store;
+mod theme;
 mod ui;
 mod youtube;
 
@@ -171,6 +172,22 @@ async fn main() -> Result<()> {
         return selftest(&query).await;
     }
 
+    // `--theme <名稱>` 覆寫設定檔裡的 preset。
+    let theme_preset = args
+        .iter()
+        .position(|a| a == "--theme")
+        .and_then(|pos| args.get(pos + 1))
+        .cloned();
+    if let Some(name) = theme_preset.as_ref()
+        && !theme::PRESETS.contains(&name.as_str())
+    {
+        eprintln!(
+            "沒有叫「{name}」的內建主題，可用的是：{}",
+            theme::PRESETS.join("、")
+        );
+        std::process::exit(1);
+    }
+
     let startup_note = match youtube::version().await {
         Ok(version) => {
             println!("yt-dlp {version} 就緒");
@@ -215,7 +232,15 @@ async fn main() -> Result<()> {
     }
 
     let terminal = ratatui::init();
-    let result = run(terminal, audio, event_tx, &mut event_rx, startup_note).await;
+    let result = run(
+        terminal,
+        audio,
+        event_tx,
+        &mut event_rx,
+        startup_note,
+        theme_preset,
+    )
+    .await;
     ratatui::restore();
     control::cleanup();
     result
@@ -227,6 +252,7 @@ async fn run(
     tx: mpsc::UnboundedSender<Msg>,
     rx: &mut mpsc::UnboundedReceiver<Msg>,
     startup_note: Option<String>,
+    theme_preset: Option<String>,
 ) -> Result<()> {
     // 鍵盤輸入在獨立執行緒讀取，避免阻塞 async 執行期。
     {
@@ -258,7 +284,7 @@ async fn run(
         });
     }
 
-    let mut app = App::new(audio, tx, startup_note);
+    let mut app = App::new(audio, tx, startup_note, theme_preset);
 
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, &mut app))?;

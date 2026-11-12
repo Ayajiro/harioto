@@ -1,16 +1,15 @@
 //! 終端機畫面繪製。
 
 use crate::app::{App, Focus, Mode, format_duration};
+use crate::theme::Theme;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Gauge, List, ListItem, Paragraph},
+    widgets::{Block, Gauge, List, ListItem, Paragraph},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-
-const ACCENT: Color = Color::Rgb(255, 72, 72);
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let rows = Layout::vertical([
@@ -27,23 +26,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_status(frame, app, rows[3]);
 }
 
-fn panel(title: &str, focused: bool) -> Block<'_> {
-    let style = if focused {
-        Style::default().fg(ACCENT)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-    Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(style)
-        .title(Span::styled(
-            format!(" {title} "),
-            if focused {
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Gray)
-            },
-        ))
+/// 面板外框。主題設成無框時只留標題，省下四行高度。
+fn panel<'a>(theme: &Theme, title: &'a str, focused: bool) -> Block<'a> {
+    let line = if focused { theme.accent } else { theme.dim };
+    let title = Span::styled(
+        format!(" {title} "),
+        if focused {
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.muted)
+        },
+    );
+    match theme.border.kind() {
+        Some(kind) => Block::bordered()
+            .border_type(kind)
+            .border_style(Style::default().fg(line))
+            .title(title),
+        None => Block::new().title(title),
+    }
 }
 
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
@@ -57,13 +59,14 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         "按 / 搜尋 YouTube，按 N 新增歌單".to_string()
     };
+    let theme = &app.theme;
     let style = if editing {
-        Style::default().fg(Color::White)
+        Style::default().fg(theme.text)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme.dim)
     };
     frame.render_widget(
-        Paragraph::new(Span::styled(text, style)).block(panel(title, editing)),
+        Paragraph::new(Span::styled(text, style)).block(panel(theme, title, editing)),
         area,
     );
 }
@@ -84,14 +87,18 @@ fn draw_lists(frame: &mut Frame, app: &mut App, area: Rect) {
             ListItem::new(Line::from(vec![
                 Span::raw(name),
                 Span::raw(" ".repeat(pad)),
-                Span::styled(count, Style::default().fg(Color::DarkGray)),
+                Span::styled(count, Style::default().fg(app.theme.muted)),
             ]))
         })
         .collect();
 
     let playlists = List::new(playlist_items)
-        .block(panel("歌單", app.focus == Focus::Playlists))
-        .highlight_style(Style::default().bg(ACCENT).fg(Color::Black))
+        .block(panel(&app.theme, "歌單", app.focus == Focus::Playlists))
+        .highlight_style(
+            Style::default()
+                .bg(app.theme.selection_bg)
+                .fg(app.theme.selection_fg),
+        )
         .highlight_symbol("▌");
     frame.render_stateful_widget(playlists, columns[0], &mut app.playlist_state);
 
@@ -107,20 +114,29 @@ fn draw_lists(frame: &mut Frame, app: &mut App, area: Rect) {
             ListItem::new(Line::from(vec![
                 Span::raw(left),
                 Span::raw(" ".repeat(pad)),
-                Span::styled(duration, Style::default().fg(Color::DarkGray)),
+                Span::styled(duration, Style::default().fg(app.theme.muted)),
             ]))
         })
         .collect();
 
     let tracks = List::new(track_items)
-        .block(panel(&app.track_title, app.focus == Focus::Tracks))
-        .highlight_style(Style::default().bg(ACCENT).fg(Color::Black))
+        .block(panel(
+            &app.theme,
+            &app.track_title,
+            app.focus == Focus::Tracks,
+        ))
+        .highlight_style(
+            Style::default()
+                .bg(app.theme.selection_bg)
+                .fg(app.theme.selection_fg),
+        )
         .highlight_symbol("▌");
     frame.render_stateful_widget(tracks, columns[1], &mut app.track_state);
 }
 
 fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
-    let block = panel("播放中", false);
+    let theme = &app.theme;
+    let block = panel(theme, "播放中", false);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -130,7 +146,7 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
         frame.render_widget(
             Paragraph::new(Span::styled(
                 "尚未播放任何曲目",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.dim),
             )),
             rows[0],
         );
@@ -148,19 +164,21 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
     let header = Line::from(vec![
         Span::styled(
             format!("{state} "),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             now.video.title.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("  {}", now.video.channel),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(theme.muted),
         ),
         Span::styled(
             format!("   音量 {}%", app.volume_percent()),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ),
         Span::styled(
             if !app.normalize {
@@ -170,7 +188,7 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 "  平衡 量測中".to_string()
             },
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ),
     ]);
     frame.render_widget(Paragraph::new(header), rows[0]);
@@ -183,7 +201,7 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
         (position as f64 / duration as f64).clamp(0.0, 1.0)
     };
     let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(ACCENT).bg(Color::Rgb(40, 40, 40)))
+        .gauge_style(Style::default().fg(theme.accent).bg(theme.gauge_track))
         .ratio(ratio)
         .label(format!(
             "{} / {}",
@@ -199,9 +217,11 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(Line::from(vec![
             Span::styled(
                 format!(" {} ", app.status),
-                Style::default().fg(Color::Black).bg(ACCENT),
+                Style::default()
+                    .fg(app.theme.on_accent)
+                    .bg(app.theme.accent),
             ),
-            Span::styled(hints, Style::default().fg(Color::DarkGray)),
+            Span::styled(hints, Style::default().fg(app.theme.dim)),
         ])),
         area,
     );

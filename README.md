@@ -36,7 +36,7 @@ cargo run --release
 
 | Command | Effect |
 | --- | --- |
-| `harioto` | Start the player |
+| `harioto [--theme <name>]` | Start the player |
 | `harioto search <query>` | Search YouTube |
 | `harioto radio <id\|url>` | Build a radio from one song, seed first |
 | `harioto playlist list\|show\|create\|add` | Local playlists |
@@ -120,6 +120,24 @@ A target that looks like a video id or a YouTube URL is fetched directly; anythi
 
 `index` counts the queue the player built when the radio started, and it climbs on its own as tracks end — leave a player running for an hour and it has moved a dozen places. `harioto radio <id>` asks YouTube again and returns a fresh list whose order need not match that queue, so holding the two side by side says nothing about where the player is. `status` is the only answer to that question.
 
+## Colours
+
+Three presets ship with it — `ember` (the default), `mono`, which paints everything in your terminal's own foreground, and `light`. Pick one with `--theme <name>`.
+
+`~/.config/harioto/theme.json` overrides whichever preset is in effect, one role at a time:
+
+```json
+{
+  "preset": "mono",
+  "border": "none",
+  "colors": { "accent": "#7aa2f7", "muted": "244", "text": "terminal" }
+}
+```
+
+Roles: `accent`, `on_accent`, `text`, `muted`, `dim`, `selection_bg`, `selection_fg`, `gauge_track`. A colour is `#rrggbb`, a 16-colour name such as `bright_blue`, a 256-colour index, or `terminal` to inherit what the terminal already uses. `border` takes `rounded`, `plain`, `thick` or `none`; `none` drops the frames and gives four more rows to the lists, which matters in a split pane.
+
+The file is re-read within a quarter of a second of being saved, so a colour edit lands without restarting the player. A file that does not parse is ignored, with the reason in the log.
+
 ## Radio
 
 `r` takes the current track as a seed and loads the mix YouTube generates for it (`list=RD<videoID>`), up to 100 tracks in recommendation order. The seed keeps playing; the queue continues from it.
@@ -137,6 +155,7 @@ A target that looks like a video id or a YouTube URL is fetched directly; anythi
 - Audio cache — `~/Library/Caches/harioto/audio/` (`~/.cache/harioto/audio/` on Linux)
 - Playlists — `~/.config/harioto/playlists.json`
 - Control socket — `~/.config/harioto/ctl.sock`, present only while a player runs
+- Theme — `~/.config/harioto/theme.json`, optional
 - Loudness measurements — `~/.config/harioto/loudness.json`, one entry per track
 - Play history — `~/.config/harioto/history.jsonl`, last 10,000 entries
 - Radio seeds — `~/.config/harioto/seeds.jsonl`, last 2,000 entries

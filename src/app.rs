@@ -5,6 +5,7 @@ use crate::{
     cache,
     loudness::{self, Measurement},
     store::Library,
+    theme::Theme,
     youtube::{self, Video},
 };
 use ratatui::{
@@ -14,7 +15,7 @@ use ratatui::{
 use std::{
     collections::HashMap,
     path::PathBuf,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -114,10 +115,21 @@ pub struct App {
     pub normalize: bool,
     /// 已知的響度量測結果，開機時從檔案讀回來。
     loudness: HashMap<String, Measurement>,
+    /// 目前的配色與框線。
+    pub theme: Theme,
+    /// `--theme` 指定的內建主題，重讀設定檔時仍然優先。
+    theme_preset: Option<String>,
+    /// 主題檔上次讀到的修改時間，用來察覺外部改動。
+    theme_mtime: Option<SystemTime>,
 }
 
 impl App {
-    pub fn new(mut audio: AudioPlayer, tx: UnboundedSender<Msg>, note: Option<String>) -> Self {
+    pub fn new(
+        mut audio: AudioPlayer,
+        tx: UnboundedSender<Msg>,
+        note: Option<String>,
+        theme_preset: Option<String>,
+    ) -> Self {
         audio.set_volume(0.5);
         let library = Library::load();
         let mut playlist_state = ListState::default();
@@ -149,7 +161,21 @@ impl App {
             pending_confirm: None,
             normalize: true,
             loudness: loudness::load(),
+            theme: crate::theme::load(theme_preset.as_deref()),
+            theme_mtime: crate::theme::mtime(),
+            theme_preset,
         }
+    }
+
+    /// 主題檔被改過就重讀，讓調色不必重開播放器。
+    fn refresh_theme(&mut self) {
+        let mtime = crate::theme::mtime();
+        if mtime == self.theme_mtime {
+            return;
+        }
+        self.theme_mtime = mtime;
+        self.theme = crate::theme::load(self.theme_preset.as_deref());
+        self.status = "已套用新的主題設定".into();
     }
 
     pub fn volume_percent(&self) -> u16 {
@@ -746,7 +772,10 @@ impl App {
 
     pub fn handle(&mut self, msg: Msg) {
         match msg {
-            Msg::Tick => self.refresh_library(),
+            Msg::Tick => {
+                self.refresh_library();
+                self.refresh_theme();
+            }
             Msg::Control { control, reply } => {
                 let answer = self.control(control);
                 let _ = reply.send(answer);
