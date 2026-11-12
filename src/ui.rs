@@ -14,28 +14,37 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     let compact = area.height < COMPACT_BELOW;
+    let narrow = area.width < NARROW_BELOW;
     let editing = app.mode != Mode::Browse;
-    let rows = split_rows(area, compact, editing);
+    let rows = split_rows(area, compact, narrow, editing);
 
     if rows[0].height > 0 {
         draw_input(frame, app, rows[0], compact);
     }
-    draw_lists(frame, app, rows[1]);
-    draw_now_playing(frame, app, rows[2], compact);
+    draw_lists(frame, app, rows[1], narrow);
+    draw_now_playing(frame, app, rows[2], compact, narrow);
     draw_status(frame, app, rows[3]);
 }
 
 /// 低於這個高度就改用精簡版面：搜尋框只在輸入時出現，播放中不畫外框。
 const COMPACT_BELOW: u16 = 18;
 
+/// 低於這個寬度就改成單欄：只畫有焦點的那一份清單，另一份用 Tab 換過來。
+const NARROW_BELOW: u16 = 70;
+
 /// 四個區塊的位置。抽出來是為了能單獨驗算高度分配。
-fn split_rows(area: Rect, compact: bool, editing: bool) -> [Rect; 4] {
+fn split_rows(area: Rect, compact: bool, narrow: bool, editing: bool) -> [Rect; 4] {
     let input = match (compact, editing) {
         (false, _) => 3,
         (true, true) => 1,
         (true, false) => 0,
     };
-    let now = if compact { 2 } else { 4 };
+    // 單欄時播放中多拿一行，曲名、頻道、數值各自成行。
+    let now = match (compact, narrow) {
+        (true, _) => 2,
+        (false, true) => 5,
+        (false, false) => 4,
+    };
     let rows = Layout::vertical([
         Constraint::Length(input),
         Constraint::Min(2),
@@ -105,70 +114,98 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect, compact: bool) {
     );
 }
 
-fn draw_lists(frame: &mut Frame, app: &mut App, area: Rect) {
+/// 兩份清單的位置。單欄時只有拿到焦點的那一份有空間，另一份回傳 None。
+fn list_columns(area: Rect, narrow: bool, focus: Focus) -> [Option<Rect>; 2] {
+    if narrow {
+        return match focus {
+            Focus::Playlists => [Some(area), None],
+            Focus::Tracks => [None, Some(area)],
+        };
+    }
     let columns =
         Layout::horizontal([Constraint::Percentage(28), Constraint::Percentage(72)]).split(area);
-
-    let playlist_width = columns[0].width.saturating_sub(3) as usize;
-    let playlist_items: Vec<ListItem> = app
-        .library
-        .playlists
-        .iter()
-        .map(|p| {
-            let count = format!("{}", p.tracks.len());
-            let name = truncate(&p.name, playlist_width.saturating_sub(count.len() + 2));
-            let pad = playlist_width.saturating_sub(name.width() + count.len());
-            ListItem::new(Line::from(vec![
-                Span::raw(name),
-                Span::raw(" ".repeat(pad)),
-                Span::styled(count, Style::default().fg(app.theme.muted)),
-            ]))
-        })
-        .collect();
-
-    let playlists = List::new(playlist_items)
-        .block(panel(&app.theme, "歌單", app.focus == Focus::Playlists))
-        .highlight_style(
-            Style::default()
-                .bg(app.theme.selection_bg)
-                .fg(app.theme.selection_fg),
-        )
-        .highlight_symbol("▌");
-    frame.render_stateful_widget(playlists, columns[0], &mut app.playlist_state);
-
-    let width = columns[1].width.saturating_sub(3) as usize;
-    let track_items: Vec<ListItem> = app
-        .tracks
-        .iter()
-        .map(|t| {
-            let duration = format_duration(t.duration_ms);
-            let left = format!("{} — {}", t.channel, t.title);
-            let left = truncate(&left, width.saturating_sub(duration.len() + 2));
-            let pad = width.saturating_sub(left.width() + duration.len());
-            ListItem::new(Line::from(vec![
-                Span::raw(left),
-                Span::raw(" ".repeat(pad)),
-                Span::styled(duration, Style::default().fg(app.theme.muted)),
-            ]))
-        })
-        .collect();
-
-    let tracks = List::new(track_items)
-        .block(panel(
-            &app.theme,
-            &app.track_title,
-            app.focus == Focus::Tracks,
-        ))
-        .highlight_style(
-            Style::default()
-                .bg(app.theme.selection_bg)
-                .fg(app.theme.selection_fg),
-        )
-        .highlight_symbol("▌");
-    frame.render_stateful_widget(tracks, columns[1], &mut app.track_state);
+    [Some(columns[0]), Some(columns[1])]
 }
 
-fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, compact: bool) {
+/// 單欄時在標題前面標出 Tab 可以換到另一份清單。
+fn list_title(title: &str, narrow: bool) -> String {
+    if narrow {
+        format!("Tab 切換 — {title}")
+    } else {
+        title.to_string()
+    }
+}
+
+fn draw_lists(frame: &mut Frame, app: &mut App, area: Rect, narrow: bool) {
+    let columns = list_columns(area, narrow, app.focus);
+
+    if let Some(column) = columns[0] {
+        let playlist_width = column.width.saturating_sub(3) as usize;
+        let playlist_items: Vec<ListItem> = app
+            .library
+            .playlists
+            .iter()
+            .map(|p| {
+                let count = format!("{}", p.tracks.len());
+                let name = truncate(&p.name, playlist_width.saturating_sub(count.len() + 2));
+                let pad = playlist_width.saturating_sub(name.width() + count.len());
+                ListItem::new(Line::from(vec![
+                    Span::raw(name),
+                    Span::raw(" ".repeat(pad)),
+                    Span::styled(count, Style::default().fg(app.theme.muted)),
+                ]))
+            })
+            .collect();
+
+        let title = list_title("歌單", narrow);
+        let playlists = List::new(playlist_items)
+            .block(panel(&app.theme, &title, app.focus == Focus::Playlists))
+            .highlight_style(
+                Style::default()
+                    .bg(app.theme.selection_bg)
+                    .fg(app.theme.selection_fg),
+            )
+            .highlight_symbol("▌");
+        frame.render_stateful_widget(playlists, column, &mut app.playlist_state);
+    }
+
+    if let Some(column) = columns[1] {
+        let width = column.width.saturating_sub(3) as usize;
+        let track_items: Vec<ListItem> = app
+            .tracks
+            .iter()
+            .map(|t| {
+                let duration = format_duration(t.duration_ms);
+                // 單欄時把空間讓給曲名，頻道在播放中那一行仍然看得到。
+                let left = if narrow {
+                    t.title.clone()
+                } else {
+                    format!("{} — {}", t.channel, t.title)
+                };
+                let left = truncate(&left, width.saturating_sub(duration.len() + 2));
+                let pad = width.saturating_sub(left.width() + duration.len());
+                ListItem::new(Line::from(vec![
+                    Span::raw(left),
+                    Span::raw(" ".repeat(pad)),
+                    Span::styled(duration, Style::default().fg(app.theme.muted)),
+                ]))
+            })
+            .collect();
+
+        let title = list_title(&app.track_title, narrow);
+        let tracks = List::new(track_items)
+            .block(panel(&app.theme, &title, app.focus == Focus::Tracks))
+            .highlight_style(
+                Style::default()
+                    .bg(app.theme.selection_bg)
+                    .fg(app.theme.selection_fg),
+            )
+            .highlight_symbol("▌");
+        frame.render_stateful_widget(tracks, column, &mut app.track_state);
+    }
+}
+
+fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, compact: bool, narrow: bool) {
     let theme = &app.theme;
     let inner = if compact {
         area
@@ -179,7 +216,18 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, compact: bool) {
         inner
     };
 
-    let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(inner);
+    // 單欄時拆成三行，寬畫面維持兩行。
+    let stacked = narrow && !compact;
+    let rows = if stacked {
+        Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner)
+    } else {
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(inner)
+    };
 
     let Some(now) = app.now.as_ref() else {
         frame.render_widget(
@@ -200,37 +248,71 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, compact: bool) {
         "播放"
     };
 
-    let header = Line::from(vec![
-        Span::styled(
-            format!("{state} "),
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            now.video.title.clone(),
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("  {}", now.video.channel),
-            Style::default().fg(theme.muted),
-        ),
-        Span::styled(
-            format!("   音量 {}%", app.volume_percent()),
-            Style::default().fg(theme.muted),
-        ),
-        Span::styled(
-            if !app.normalize {
-                "  平衡關".to_string()
-            } else if app.gain_ready() {
-                format!("  平衡 {:+.1} dB", app.gain_db())
-            } else {
-                "  平衡 量測中".to_string()
-            },
-            Style::default().fg(theme.muted),
-        ),
-    ]);
-    frame.render_widget(Paragraph::new(header), rows[0]);
+    let balance = if !app.normalize {
+        "平衡關".to_string()
+    } else if app.gain_ready() {
+        format!("平衡 {:+.1} dB", app.gain_db())
+    } else {
+        "平衡 量測中".to_string()
+    };
+    let metrics = format!("音量 {}%  {}", app.volume_percent(), balance);
+
+    let head = format!("{state} ");
+    let total = rows[0].width as usize;
+    let accent = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let strong = Style::default().fg(theme.text).add_modifier(Modifier::BOLD);
+    let muted = Style::default().fg(theme.muted);
+
+    if stacked {
+        let title = truncate(&now.video.title, total.saturating_sub(head.width()));
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(head, accent),
+                Span::styled(title, strong),
+            ])),
+            rows[0],
+        );
+
+        let channel = truncate(
+            &now.video.channel,
+            total.saturating_sub(metrics.width() + 2),
+        );
+        let gap = total.saturating_sub(channel.width() + metrics.width());
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(channel, muted),
+                Span::raw(" ".repeat(gap)),
+                Span::styled(metrics, muted),
+            ])),
+            rows[1],
+        );
+    } else {
+        // 數值固定保留位置，曲名優先，頻道拿剩下的，免得任何一段被擠出畫面。
+        let tail = format!("   {metrics}");
+        let room = total.saturating_sub(head.width() + tail.width());
+        // 曲名先拿它需要的，剩下的歸頻道；兩個加起來放不下時曲名讓出三分之一。
+        let budget = room
+            .saturating_sub(now.video.channel.width() + 2)
+            .max(room.saturating_sub(room / 3));
+        let title = truncate(&now.video.title, budget);
+        let channel = truncate(&now.video.channel, room.saturating_sub(title.width() + 2));
+        let channel = if channel.is_empty() {
+            String::new()
+        } else {
+            format!("  {channel}")
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(head, accent),
+                Span::styled(title, strong),
+                Span::styled(channel, muted),
+                Span::styled(tail, muted),
+            ])),
+            rows[0],
+        );
+    }
 
     let position = now.position_ms();
     let duration = now.video.duration_ms;
@@ -247,7 +329,7 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, compact: bool) {
             format_duration(position),
             format_duration(duration)
         ));
-    frame.render_widget(gauge, rows[1]);
+    frame.render_widget(gauge, rows[rows.len() - 1]);
 }
 
 /// 狀態訊息至少保留的寬度，免得提示列把它整個擠掉。
@@ -365,7 +447,7 @@ mod tests {
 
     fn rows_at(height: u16, compact: bool, editing: bool) -> [u16; 4] {
         let area = Rect::new(0, 0, 144, height);
-        split_rows(area, compact, editing).map(|rect| rect.height)
+        split_rows(area, compact, false, editing).map(|rect| rect.height)
     }
 
     #[test]
@@ -385,6 +467,37 @@ mod tests {
     #[test]
     fn a_tall_pane_keeps_the_full_layout() {
         assert_eq!(rows_at(30, false, false), [3, 22, 4, 1]);
+    }
+
+    #[test]
+    fn a_narrow_pane_shows_one_list_at_a_time() {
+        let area = Rect::new(0, 0, 50, 20);
+
+        let both = list_columns(area, false, Focus::Tracks);
+        assert!(both[0].is_some() && both[1].is_some(), "寬畫面要有兩欄");
+
+        let on_tracks = list_columns(area, true, Focus::Tracks);
+        assert!(on_tracks[0].is_none(), "焦點在清單時歌單讓位");
+        assert_eq!(on_tracks[1].map(|r| r.width), Some(50));
+
+        let on_playlists = list_columns(area, true, Focus::Playlists);
+        assert_eq!(on_playlists[0].map(|r| r.width), Some(50));
+        assert!(on_playlists[1].is_none(), "焦點在歌單時清單讓位");
+    }
+
+    #[test]
+    fn one_column_titles_say_how_to_get_back() {
+        assert_eq!(list_title("歌單", false), "歌單");
+        assert!(list_title("歌單", true).contains("Tab"));
+    }
+
+    #[test]
+    fn a_narrow_pane_gives_playing_its_own_rows() {
+        let area = Rect::new(0, 0, 50, 30);
+        let narrow = split_rows(area, false, true, false).map(|rect| rect.height);
+        let wide = split_rows(area, false, false, false).map(|rect| rect.height);
+        assert_eq!(narrow, [3, 21, 5, 1]);
+        assert_eq!(wide, [3, 22, 4, 1]);
     }
 
     #[test]
