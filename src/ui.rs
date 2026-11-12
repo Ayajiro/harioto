@@ -7,7 +7,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, List, ListItem, Paragraph},
+    widgets::{Block, Gauge, List, ListItem, Paragraph},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -39,11 +39,11 @@ fn split_rows(area: Rect, compact: bool, narrow: bool, editing: bool) -> [Rect; 
         (true, true) => 1,
         (true, false) => 0,
     };
-    // 進度在狀態列上，所以播放中只留文字：單欄兩行，其餘一行。
+    // 播放中帶著進度條：單欄時曲名、頻道、進度各一行，其餘兩行。
     let now = match (compact, narrow) {
-        (true, _) => 1,
-        (false, true) => 4,
-        (false, false) => 3,
+        (true, _) => 2,
+        (false, true) => 5,
+        (false, false) => 4,
     };
     let rows = Layout::vertical([
         Constraint::Length(input),
@@ -245,13 +245,18 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, compact: bool, nar
         inner
     };
 
-    // 單欄時拆成兩行，寬畫面一行放得下。
+    // 單欄時頻道另起一行，其餘版面把頻道接在曲名後面。
     let stacked = narrow && !compact;
-    let rows = if stacked {
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(inner)
+    let heights = if stacked {
+        vec![
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ]
     } else {
-        Layout::vertical([Constraint::Length(1)]).split(inner)
+        vec![Constraint::Length(1), Constraint::Length(1)]
     };
+    let rows = Layout::vertical(heights).split(inner);
 
     let Some(now) = app.now.as_ref() else {
         frame.render_widget(
@@ -312,31 +317,72 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect, compact: bool, nar
             ])),
             rows[1],
         );
-    } else {
-        // 數值固定保留位置，曲名優先，頻道拿剩下的，免得任何一段被擠出畫面。
-        let tail = format!("   {metrics}");
-        let room = total.saturating_sub(head.width() + tail.width());
-        // 曲名先拿它需要的，剩下的歸頻道；兩個加起來放不下時曲名讓出三分之一。
-        let budget = room
-            .saturating_sub(now.video.channel.width() + 2)
-            .max(room.saturating_sub(room / 3));
-        let title = truncate(&now.video.title, budget);
-        let channel = truncate(&now.video.channel, room.saturating_sub(title.width() + 2));
-        let channel = if channel.is_empty() {
-            String::new()
-        } else {
-            format!("  {channel}")
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(head, accent),
-                Span::styled(title, strong),
-                Span::styled(channel, muted),
-                Span::styled(tail, muted),
-            ])),
-            rows[0],
-        );
+        draw_progress(frame, app, rows[2]);
+        return;
     }
+
+    // 曲名先拿它需要的，剩下的歸頻道，兩個加起來放不下時曲名讓出三分之一。
+    let room = total.saturating_sub(head.width());
+    let budget = room
+        .saturating_sub(now.video.channel.width() + 2)
+        .max(room.saturating_sub(room / 3));
+    let title = truncate(&now.video.title, budget);
+    let channel = truncate(&now.video.channel, room.saturating_sub(title.width() + 2));
+    let channel = if channel.is_empty() {
+        String::new()
+    } else {
+        format!("  {channel}")
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(head, accent),
+            Span::styled(title, strong),
+            Span::styled(channel, muted),
+        ])),
+        rows[0],
+    );
+
+    // 進度條和音量共用一行：進度佔左邊，數值靠右。
+    let tail = metrics.width() as u16 + 2;
+    let columns =
+        Layout::horizontal([Constraint::Min(MIN_GAUGE), Constraint::Length(tail)]).split(rows[1]);
+    draw_progress(frame, app, columns[0]);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(metrics, muted),
+        ])),
+        columns[1],
+    );
+}
+
+/// 進度條至少要這麼寬，不然時間標籤擠不下。
+const MIN_GAUGE: u16 = 14;
+
+fn draw_progress(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(now) = app.now.as_ref() else {
+        return;
+    };
+    let position = now.position_ms();
+    let duration = now.video.duration_ms;
+    let ratio = if duration == 0 {
+        0.0
+    } else {
+        (position as f64 / duration as f64).clamp(0.0, 1.0)
+    };
+    let gauge = Gauge::default()
+        .gauge_style(
+            Style::default()
+                .fg(app.theme.accent)
+                .bg(app.theme.gauge_track),
+        )
+        .ratio(ratio)
+        .label(format!(
+            "{} / {}",
+            format_duration(position),
+            format_duration(duration)
+        ));
+    frame.render_widget(gauge, area);
 }
 
 /// 狀態訊息至少保留的寬度，免得提示列把它整個擠掉。
@@ -390,75 +436,37 @@ fn compose_hints(keep: &[bool; HINTS.len()]) -> String {
     out
 }
 
-/// 時間要和底色對齊，所以放在最左邊；窄到這個寬度以下就不放。
-const CLOCK_MIN: usize = 34;
-
-/// 播過的比例換算成要上底色的格數。
-fn filled_cells(width: u16, position_ms: u32, duration_ms: u32) -> u16 {
-    if duration_ms == 0 || width == 0 {
-        return 0;
-    }
-    let ratio = (position_ms as f64 / duration_ms as f64).clamp(0.0, 1.0);
-    (width as f64 * ratio).round() as u16
-}
-
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     let total = area.width as usize;
-    let theme = &app.theme;
-
-    let clock = match app.now.as_ref() {
-        Some(now) if total >= CLOCK_MIN => format!(
-            " {} / {} ",
-            format_duration(now.position_ms()),
-            format_duration(now.video.duration_ms)
-        ),
-        _ => String::new(),
-    };
-
     let message = app.context_line();
     // 提示先取得空間，但替狀態訊息留一塊，兩邊都不會被完全擠掉。
     let reserved = if message.is_empty() {
         0
     } else {
-        // 訊息比保留寬度短的時候，多出來的空間給提示列。
-        STATUS_MIN.min(message.width() + 1).min(total / 2)
+        STATUS_MIN.min(message.width() + 2).min(total / 2)
     };
-    let hints = hint_line(total.saturating_sub(clock.width() + reserved));
-    let left = total.saturating_sub(clock.width() + hints.width());
+    let hints = hint_line(total.saturating_sub(reserved));
+    let left = total.saturating_sub(hints.width());
     let status = if message.is_empty() || left < 4 {
         String::new()
     } else {
-        format!("{} ", truncate(&message, left.saturating_sub(1)))
+        format!(" {} ", truncate(&message, left.saturating_sub(2)))
     };
-    let gap = total.saturating_sub(clock.width() + status.width() + hints.width());
+    let gap = total.saturating_sub(status.width() + hints.width());
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                clock,
+                status,
                 Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
+                    .fg(app.theme.on_accent)
+                    .bg(app.theme.accent),
             ),
-            Span::styled(status, Style::default().fg(theme.muted)),
             Span::raw(" ".repeat(gap)),
-            Span::styled(hints, Style::default().fg(theme.dim)),
+            Span::styled(hints, Style::default().fg(app.theme.dim)),
         ])),
         area,
     );
-
-    // 鋪在文字後面的底色就是進度條本身。
-    let Some(now) = app.now.as_ref() else {
-        return;
-    };
-    let filled = filled_cells(area.width, now.position_ms(), now.video.duration_ms);
-    let track = theme.gauge_track;
-    let buffer = frame.buffer_mut();
-    for x in area.left()..area.left() + filled.min(area.width) {
-        if let Some(cell) = buffer.cell_mut((x, area.top())) {
-            cell.set_bg(track);
-        }
-    }
 }
 
 /// 依終端機顯示寬度截斷，中日韓文字算兩格。
@@ -499,19 +507,19 @@ mod tests {
     fn a_short_pane_gives_the_lists_what_the_frames_took() {
         let roomy = rows_at(14, false, false);
         let compact = rows_at(14, true, false);
-        assert_eq!(roomy, [3, 7, 3, 1]);
-        assert_eq!(compact, [0, 12, 1, 1]);
+        assert_eq!(roomy, [3, 6, 4, 1]);
+        assert_eq!(compact, [0, 11, 2, 1]);
         assert!(compact[1] > roomy[1] + 4, "清單沒有拿到足夠的行數");
     }
 
     #[test]
     fn typing_brings_the_search_line_back() {
-        assert_eq!(rows_at(14, true, true), [1, 11, 1, 1]);
+        assert_eq!(rows_at(14, true, true), [1, 10, 2, 1]);
     }
 
     #[test]
     fn a_tall_pane_keeps_the_full_layout() {
-        assert_eq!(rows_at(30, false, false), [3, 23, 3, 1]);
+        assert_eq!(rows_at(30, false, false), [3, 22, 4, 1]);
     }
 
     #[test]
@@ -562,17 +570,8 @@ mod tests {
         let area = Rect::new(0, 0, 50, 30);
         let narrow = split_rows(area, false, true, false).map(|rect| rect.height);
         let wide = split_rows(area, false, false, false).map(|rect| rect.height);
-        assert_eq!(narrow, [3, 22, 4, 1]);
-        assert_eq!(wide, [3, 23, 3, 1]);
-    }
-
-    #[test]
-    fn the_status_line_shades_what_has_played() {
-        assert_eq!(filled_cells(100, 30_000, 60_000), 50);
-        assert_eq!(filled_cells(100, 60_000, 60_000), 100);
-        assert_eq!(filled_cells(100, 90_000, 60_000), 100, "超過長度不會溢出");
-        assert_eq!(filled_cells(100, 0, 0), 0, "長度不明就不上色");
-        assert_eq!(filled_cells(0, 10_000, 60_000), 0);
+        assert_eq!(narrow, [3, 21, 5, 1]);
+        assert_eq!(wide, [3, 22, 4, 1]);
     }
 
     #[test]

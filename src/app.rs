@@ -297,20 +297,12 @@ impl App {
         }
     }
 
-    /// 狀態列左側要顯示的字。剛發生的訊息優先，過了就換成電台種子。
+    /// 狀態列左側要顯示的字。訊息擺幾秒就讓位給按鍵提示，平常這一行只有提示。
     pub fn context_line(&self) -> String {
-        if self.status_at.elapsed() < STATUS_HOLD && !self.status.is_empty() {
+        if self.status_at.elapsed() < STATUS_HOLD {
             return self.status.clone();
         }
-        let Some(seed) = self.seed.as_ref() else {
-            return self.status.clone();
-        };
-        let mut line = format!("電台種子：{}", seed.channel);
-        if !self.seed_tags.is_empty() {
-            line.push('・');
-            line.push_str(&self.seed_tags.join("、"));
-        }
-        line
+        String::new()
     }
 
     /// 主題檔被改過就重讀，讓調色不必重開播放器。
