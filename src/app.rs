@@ -153,6 +153,9 @@ pub struct App {
     theme_mtime: Option<SystemTime>,
     /// 目前這首的縮圖，解開之後放著重複使用。
     cover: Option<cover::Image>,
+    /// 喇叭裡正在響的是哪一首。換曲時 `now` 會先變，這個要等檔案真的接上去才變，
+    /// 增益跟著它走，才不會在緩衝那幾秒改到上一首的音量。
+    audible: Option<String>,
     /// 使用者要不要看縮圖。設定檔給初值，按鍵臨時改。
     pub cover_on: bool,
     /// 畫面替縮圖留的位置，由版面決定，沒有就是這次不畫。
@@ -210,6 +213,7 @@ impl App {
             seed: None,
             seed_tags: Vec::new(),
             status_at: Instant::now(),
+            audible: None,
             cover_on: theme.cover,
             theme,
             theme_mtime: crate::theme::mtime(),
@@ -564,6 +568,7 @@ impl App {
             }
             Control::Stop => {
                 self.audio.stop();
+                self.audible = None;
                 self.now = None;
                 self.status = t!(
                     "已停止（來自控制通道）",
@@ -824,6 +829,7 @@ impl App {
                     self.play_index(index);
                 } else {
                     self.audio.stop();
+                    self.audible = None;
                     self.now = None;
                     self.playing_index = None;
                 }
@@ -1007,12 +1013,12 @@ impl App {
         });
     }
 
-    /// 依目前這首的量測結果設定增益。沒量過、或平衡關掉時回到原音量。
+    /// 依正在響的那一首的量測結果設定增益。沒量過、或平衡關掉時回到原音量。
     fn apply_gain(&mut self) {
         let factor = if self.normalize {
-            self.now
+            self.audible
                 .as_ref()
-                .and_then(|now| self.loudness.get(&now.video.id))
+                .and_then(|id| self.loudness.get(id))
                 .map(|m| m.gain_factor())
                 .unwrap_or(1.0)
         } else {
@@ -1026,11 +1032,11 @@ impl App {
         20.0 * (self.audio.gain() as f64).log10()
     }
 
-    /// 這一首有沒有量測結果可用。
+    /// 正在響的這一首有沒有量測結果可用。
     pub fn gain_ready(&self) -> bool {
-        self.now
+        self.audible
             .as_ref()
-            .is_some_and(|now| self.loudness.contains_key(&now.video.id))
+            .is_some_and(|id| self.loudness.contains_key(id))
     }
 
     fn toggle_normalize(&mut self) {
@@ -1233,7 +1239,8 @@ impl App {
                     now.position_ms = 0;
                     now.marked_at = Instant::now();
                 }
-                // 先把增益備好再載入，新的一首從第一個取樣點就是對的音量。
+                // 從這一刻起喇叭裡換成這一首，增益先備好再載入。
+                self.audible = Some(video_id.clone());
                 self.apply_gain();
                 self.audio.load(path);
                 if !self.loudness.contains_key(&video_id) {
@@ -1257,11 +1264,7 @@ impl App {
                     measurement.gain_db()
                 );
                 self.loudness.insert(video_id.clone(), measurement);
-                if self
-                    .now
-                    .as_ref()
-                    .is_some_and(|now| now.video.id == video_id)
-                {
+                if self.audible.as_deref() == Some(video_id.as_str()) {
                     self.apply_gain();
                 }
             }
@@ -1393,6 +1396,7 @@ impl App {
             KeyCode::Char('d') => self.remove_selected(),
             KeyCode::Char('s') => {
                 self.audio.stop();
+                self.audible = None;
                 self.now = None;
                 self.status = t!("已停止", "Stopped", "停止しました").into();
             }
