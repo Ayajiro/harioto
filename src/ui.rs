@@ -162,6 +162,16 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
             format!("   音量 {}%", app.volume_percent()),
             Style::default().fg(Color::DarkGray),
         ),
+        Span::styled(
+            if !app.normalize {
+                "  平衡關".to_string()
+            } else if app.gain_ready() {
+                format!("  平衡 {:+.1} dB", app.gain_db())
+            } else {
+                "  平衡 量測中".to_string()
+            },
+            Style::default().fg(Color::DarkGray),
+        ),
     ]);
     frame.render_widget(Paragraph::new(header), rows[0]);
 
@@ -184,7 +194,7 @@ fn draw_now_playing(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
-    let hints = "  /搜尋  r電台  N新歌單  a加入  d移除  Tab切換  Enter播放  空白鍵暫停  n下一首  ←→快轉  +-音量  q離開";
+    let hints = "  /搜尋  r電台  N新歌單  a加入  d移除  Tab切換  Enter播放  空白鍵暫停  n下一首  ←→快轉  +-音量  g平衡  q離開";
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(

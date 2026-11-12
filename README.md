@@ -85,6 +85,7 @@ Calls read and write the same files the player uses and never touch a running in
 | `n` `b` | Next / previous |
 | `←` `→` | Seek 5 seconds |
 | `+` `-` | Volume |
+| `g` | Loudness balance on / off |
 | `s` | Stop |
 | `q` / `Esc` | Quit |
 
@@ -114,6 +115,8 @@ A target that looks like a video id or a YouTube URL is fetched directly; anythi
 | `index` | Zero-based position of the playing track in that queue |
 | `queue_len` | How many tracks the queue holds |
 | `volume` | 0–100 |
+| `normalize` | Whether loudness balance is on |
+| `gain_db` | The gain it applies to the current track |
 
 `index` counts the queue the player built when the radio started, and it climbs on its own as tracks end — leave a player running for an hour and it has moved a dozen places. `harioto radio <id>` asks YouTube again and returns a fresh list whose order need not match that queue, so holding the two side by side says nothing about where the player is. `status` is the only answer to that question.
 
@@ -125,6 +128,7 @@ A target that looks like a video id or a YouTube URL is fetched directly; anythi
 
 - **Playback** — tracks download to the cache before playing, so seeking and replays are instant. The next track is prefetched while the current one plays.
 - **Length check** — items with unknown length or longer than 20 minutes ask for a second `Enter` before playing, and are skipped during autoplay. This keeps livestreams and multi-hour compilations out of the queue.
+- **Loudness balance** — every track is measured once to EBU R128 integrated loudness and true peak, then played at a gain that brings it to -14 LUFS, bounded by ±12 dB and by a -1 dBTP ceiling so a lift never clips. Measuring runs on the prefetched file, about 0.7 s of one core for a seven-minute track, and the result is kept so a track is never measured twice. `g` turns the balance off and back on; the now-playing line shows the gain in effect.
 - **Cache cap** — the audio cache stops at 500 MB, evicting least-recently-played files. Playing a file refreshes its timestamp; deleting a file that is currently playing is harmless.
 - **yt-dlp freshness** — the version string is a release date. Past 60 days, the status bar suggests `brew upgrade yt-dlp`, since YouTube rotates its JavaScript challenge and a stale yt-dlp fails silently.
 
@@ -133,6 +137,7 @@ A target that looks like a video id or a YouTube URL is fetched directly; anythi
 - Audio cache — `~/Library/Caches/harioto/audio/` (`~/.cache/harioto/audio/` on Linux)
 - Playlists — `~/.config/harioto/playlists.json`
 - Control socket — `~/.config/harioto/ctl.sock`, present only while a player runs
+- Loudness measurements — `~/.config/harioto/loudness.json`, one entry per track
 - Play history — `~/.config/harioto/history.jsonl`, last 10,000 entries
 - Radio seeds — `~/.config/harioto/seeds.jsonl`, last 2,000 entries
 - Log — `~/Library/Caches/harioto/harioto.log`

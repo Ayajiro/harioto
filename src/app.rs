@@ -3,6 +3,7 @@
 use crate::{
     audio::{AudioEvent, AudioPlayer},
     cache,
+    loudness::{self, Measurement},
     store::Library,
     youtube::{self, Video},
 };
@@ -11,6 +12,7 @@ use ratatui::{
     widgets::ListState,
 };
 use std::{
+    collections::HashMap,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -36,6 +38,11 @@ pub enum Msg {
         continue_current: bool,
     },
     Ready { video_id: String, path: PathBuf },
+    /// 背景量測完一首的響度。
+    Loudness {
+        video_id: String,
+        measurement: Measurement,
+    },
     /// 外部程式透過控制通道送進來的指令，處理完要回覆。
     Control {
         control: crate::control::Control,
@@ -103,6 +110,10 @@ pub struct App {
     playing_index: Option<usize>,
     /// 已經提示過一次、等待再按一次確認的曲目。
     pending_confirm: Option<usize>,
+    /// 響度平衡是否生效。
+    pub normalize: bool,
+    /// 已知的響度量測結果，開機時從檔案讀回來。
+    loudness: HashMap<String, Measurement>,
 }
 
 impl App {
@@ -136,6 +147,8 @@ impl App {
             }),
             playing_index: None,
             pending_confirm: None,
+            normalize: true,
+            loudness: loudness::load(),
         }
     }
 
@@ -236,6 +249,8 @@ impl App {
             "queue_len": self.tracks.len(),
             "index": self.playing_index,
             "volume": self.volume_percent(),
+            "normalize": self.normalize,
+            "gain_db": (self.gain_db() * 10.0).round() / 10.0,
         })
     }
 
@@ -553,6 +568,7 @@ impl App {
             paused: false,
             buffering: true,
         });
+        self.apply_gain();
 
         let tx = self.tx.clone();
         let id = video.id.clone();
@@ -565,7 +581,8 @@ impl App {
         });
     }
 
-    /// 背景把下一首也先抓下來，換曲時就不必等待。
+    /// 背景把下一首也先抓下來，換曲時就不必等待。抓完順便量響度，
+    /// 這樣輪到它播的時候增益已經備妥，不會在開頭調整音量。
     fn prefetch_next(&self) {
         let Some(current) = self.playing_index else {
             return;
@@ -574,9 +591,54 @@ impl App {
             return;
         };
         let id = next.id.clone();
+        let known = self.loudness.contains_key(&id);
+        let tx = self.tx.clone();
         tokio::spawn(async move {
-            let _ = cache::ensure(&id).await;
+            let Ok(path) = cache::ensure(&id).await else {
+                return;
+            };
+            if !known {
+                spawn_measure(tx, id, path);
+            }
         });
+    }
+
+    /// 依目前這首的量測結果設定增益。沒量過、或平衡關掉時回到原音量。
+    fn apply_gain(&mut self) {
+        let factor = if self.normalize {
+            self.now
+                .as_ref()
+                .and_then(|now| self.loudness.get(&now.video.id))
+                .map(|m| m.gain_factor())
+                .unwrap_or(1.0)
+        } else {
+            1.0
+        };
+        self.audio.set_gain(factor);
+    }
+
+    /// 目前套用的增益，單位 dB。
+    pub fn gain_db(&self) -> f64 {
+        20.0 * (self.audio.gain() as f64).log10()
+    }
+
+    /// 這一首有沒有量測結果可用。
+    pub fn gain_ready(&self) -> bool {
+        self.now
+            .as_ref()
+            .is_some_and(|now| self.loudness.contains_key(&now.video.id))
+    }
+
+    fn toggle_normalize(&mut self) {
+        self.normalize = !self.normalize;
+        self.apply_gain();
+        self.status = if !self.normalize {
+            "響度平衡：關".into()
+        } else if self.gain_ready() {
+            format!("響度平衡：開（這首 {:+.1} dB）", self.gain_db())
+        } else {
+            "響度平衡：開（這首還在量）".into()
+        };
     }
 
     /// 往前或往後換曲。自動接續時會跳過過長的曲目，避免卡在數小時的合輯上。
@@ -726,6 +788,7 @@ impl App {
                 }
             }
             Msg::Ready { video_id, path } => {
+                let path_for_measure = path.clone();
                 let matches_current = self
                     .now
                     .as_ref()
@@ -741,7 +804,26 @@ impl App {
                     self.status = format!("播放：{} — {}", now.video.channel, now.video.title);
                 }
                 self.audio.load(path);
+                self.apply_gain();
+                if !self.loudness.contains_key(&video_id) {
+                    spawn_measure(self.tx.clone(), video_id, path_for_measure);
+                }
                 self.prefetch_next();
+            }
+            Msg::Loudness {
+                video_id,
+                measurement,
+            } => {
+                log::info!(
+                    "{video_id}：{:.1} LUFS，真實峰值 {:.2} dBTP，增益 {:+.1} dB",
+                    measurement.lufs,
+                    measurement.peak_dbtp,
+                    measurement.gain_db()
+                );
+                self.loudness.insert(video_id.clone(), measurement);
+                if self.now.as_ref().is_some_and(|now| now.video.id == video_id) {
+                    self.apply_gain();
+                }
             }
             Msg::Error(text) => {
                 self.status = format!("錯誤：{text}");
@@ -836,6 +918,7 @@ impl App {
             KeyCode::Char('b') => self.play_offset(-1),
             KeyCode::Right => self.seek_by(SEEK_STEP_MS as i64),
             KeyCode::Left => self.seek_by(-(SEEK_STEP_MS as i64)),
+            KeyCode::Char('g') => self.toggle_normalize(),
             KeyCode::Char('+') | KeyCode::Char('=') => self.change_volume(true),
             KeyCode::Char('-') => self.change_volume(false),
             KeyCode::Char('r') => self.start_radio(),
@@ -855,4 +938,18 @@ impl App {
 pub fn format_duration(ms: u32) -> String {
     let total = Duration::from_millis(ms as u64).as_secs();
     format!("{}:{:02}", total / 60, total % 60)
+}
+
+/// 在背景量一首的響度，量完寫檔並回報。量測會卡住執行緒，所以放在 blocking 池。
+fn spawn_measure(tx: UnboundedSender<Msg>, video_id: String, path: PathBuf) {
+    tokio::task::spawn_blocking(move || match loudness::measure(&path) {
+        Ok(measurement) => {
+            loudness::save(&video_id, measurement);
+            let _ = tx.send(Msg::Loudness {
+                video_id,
+                measurement,
+            });
+        }
+        Err(e) => log::warn!("量測 {video_id} 的響度失敗：{e}"),
+    });
 }

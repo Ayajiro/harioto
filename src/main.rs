@@ -7,6 +7,7 @@ mod cache;
 mod cli;
 mod control;
 mod history;
+mod loudness;
 mod mcp;
 mod store;
 mod ui;

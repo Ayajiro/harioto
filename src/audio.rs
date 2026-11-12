@@ -34,7 +34,10 @@ pub enum AudioEvent {
 
 pub struct AudioPlayer {
     tx: Sender<AudioCommand>,
+    /// 使用者設定的音量，介面顯示的就是這個值。
     volume: f32,
+    /// 響度平衡算出來的倍率，乘在音量上送進輸出，不影響顯示。
+    gain: f32,
 }
 
 impl AudioPlayer {
@@ -106,7 +109,11 @@ impl AudioPlayer {
         });
 
         match ready_rx.recv_timeout(Duration::from_secs(5)) {
-            Ok(Ok(())) => Ok(Self { tx, volume: 0.5 }),
+            Ok(Ok(())) => Ok(Self {
+                tx,
+                volume: 0.5,
+                gain: 1.0,
+            }),
             Ok(Err(e)) => Err(anyhow!(e)),
             Err(_) => Err(anyhow!("音訊輸出啟動逾時")),
         }
@@ -142,6 +149,21 @@ impl AudioPlayer {
 
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume.clamp(0.0, 1.0);
-        self.send(AudioCommand::Volume(self.volume));
+        self.push_volume();
+    }
+
+    /// 這一首的響度平衡倍率。1.0 等於不調整。
+    pub fn gain(&self) -> f32 {
+        self.gain
+    }
+
+    pub fn set_gain(&mut self, gain: f32) {
+        self.gain = gain.clamp(0.05, 8.0);
+        self.push_volume();
+    }
+
+    /// 輸出端拿到的是兩者相乘的結果，上限 1.0 以免溢出。
+    fn push_volume(&self) {
+        self.send(AudioCommand::Volume((self.volume * self.gain).min(1.0)));
     }
 }

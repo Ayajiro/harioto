@@ -13,6 +13,7 @@ categories = ["command-line-utilities", "multimedia::audio"]
 anyhow = "1.0.104"
 crossterm = "0.29.0"
 dirs = "7.0.0"
+ebur128 = "0.1.11"
 env_logger = "0.11.11"
 futures-util = "0.3.34"
 log = "0.4.35"
