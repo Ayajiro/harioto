@@ -1,8 +1,11 @@
-//! 問終端機現在用什麼顏色。
+//! 問終端機兩件事：現在用什麼顏色，以及畫不畫得出圖。
 //!
-//! 送出 OSC 查詢（`OSC 10` 前景、`OSC 11` 背景、`OSC 4;n` 第 n 號色），
-//! 終端機會把色碼回在標準輸入。最後補一個 DA1 查詢當結尾記號：
-//! 不支援顏色查詢的終端機仍然會回 DA1，所以不必等到逾時。
+//! 送出 OSC 查詢（`OSC 10` 前景、`OSC 11` 背景、`OSC 4;n` 第 n 號色）和一個
+//! kitty 圖形協定的查詢，終端機會把答案回在標準輸入。最後補一個 DA1 查詢當
+//! 結尾記號：不支援這些查詢的終端機仍然會回 DA1，所以不必等到逾時。
+//!
+//! 圖形的答案不一定排在 DA1 前面，實測會晚一步到，所以看到 DA1 之後還會
+//! 多等一小段時間。
 
 use crate::theme::Palette;
 use ratatui::style::Color;
@@ -15,15 +18,29 @@ use std::{
 /// 整個查詢最多花這麼久。終端機通常在幾毫秒內回覆。
 const BUDGET: Duration = Duration::from_millis(300);
 
-/// 問終端機要到目前的配色。不是終端機、或終端機不回答時回 None。
-pub fn query() -> Option<Palette> {
+/// 看到 DA1 之後再多等這麼久，給晚一步到的圖形答案。
+const GRACE: Duration = Duration::from_millis(120);
+
+/// 探測結果。兩項各自獨立，問不到就是沒有。
+pub struct Probe {
+    pub palette: Option<Palette>,
+    pub graphics: bool,
+}
+
+/// 問終端機配色與圖形支援。不是終端機時兩項都當成沒有。
+pub fn query() -> Probe {
     let mut stdout = std::io::stdout();
     if !stdout.is_terminal() || !std::io::stdin().is_terminal() {
-        return None;
+        return Probe {
+            palette: None,
+            graphics: false,
+        };
     }
 
     let raw = ratatui::crossterm::terminal::enable_raw_mode().is_ok();
-    let mut request = String::from("\x1b]10;?\x07\x1b]11;?\x07");
+    // 先問圖形：傳一張 1x1 的圖進去問結果，支援的終端機會回 OK。
+    let mut request = String::from("\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\");
+    request.push_str("\x1b]10;?\x07\x1b]11;?\x07");
     for index in 0..16 {
         request.push_str(&format!("\x1b]4;{index};?\x07"));
     }
@@ -39,19 +56,38 @@ pub fn query() -> Option<Palette> {
         let _ = ratatui::crossterm::terminal::disable_raw_mode();
     }
 
-    parse(&String::from_utf8_lossy(&answer))
+    let answer = String::from_utf8_lossy(&answer).into_owned();
+    Probe {
+        palette: parse(&answer),
+        graphics: has_graphics(&answer),
+    }
 }
 
-/// 讀到看見 DA1 回覆或時間用完為止。
+/// kitty 的答覆長成 `ESC _ G i=31 ; OK ESC \`。
+fn has_graphics(answer: &str) -> bool {
+    let mut rest = answer;
+    while let Some(at) = rest.find("\x1b_G") {
+        let after = &rest[at + 3..];
+        let end = after.find('\x1b').unwrap_or(after.len());
+        if after[..end].contains(";OK") {
+            return true;
+        }
+        rest = after;
+    }
+    false
+}
+
+/// 讀到看見 DA1 回覆或時間用完為止；看到 DA1 之後再多讀一小段。
 fn read_answer() -> Vec<u8> {
     let stdin = std::io::stdin();
     let fd = stdin.as_raw_fd();
     let started = Instant::now();
     let mut collected = Vec::new();
     let mut chunk = [0u8; 1024];
+    let mut deadline = BUDGET;
 
-    while started.elapsed() < BUDGET {
-        let remaining = BUDGET.saturating_sub(started.elapsed()).as_millis() as libc::c_int;
+    while started.elapsed() < deadline {
+        let remaining = deadline.saturating_sub(started.elapsed()).as_millis() as libc::c_int;
         let mut poll = libc::pollfd {
             fd,
             events: libc::POLLIN,
@@ -70,7 +106,8 @@ fn read_answer() -> Vec<u8> {
         }
         collected.extend_from_slice(&chunk[..read]);
         if ends_with_da1(&collected) {
-            break;
+            // 圖形的答案可能還在路上，把期限縮成一小段寬限時間。
+            deadline = (started.elapsed() + GRACE).min(BUDGET + GRACE);
         }
     }
     collected
@@ -172,6 +209,16 @@ mod tests {
             Some(Color::Rgb(255, 0, 128))
         );
         assert_eq!(parse_rgb("f/0/8\x07"), Some(Color::Rgb(255, 0, 136)));
+    }
+
+    #[test]
+    fn spots_a_graphics_answer() {
+        assert!(has_graphics("\x1b[?62;22c\x1b_Gi=31;OK\x1b\\"));
+        assert!(!has_graphics("\x1b[?62;22c"));
+        assert!(
+            !has_graphics("\x1b_Gi=31;ENOTSUPPORTED:no\x1b\\"),
+            "失敗的答覆不算支援"
+        );
     }
 
     #[test]

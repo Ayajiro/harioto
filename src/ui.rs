@@ -127,6 +127,25 @@ fn list_columns(area: Rect, narrow: bool, focus: Focus) -> [Option<Rect>; 2] {
     [Some(columns[0]), Some(columns[1])]
 }
 
+/// 縮圖面板的高度，含上下框線。
+const COVER_ROWS: u16 = 12;
+
+/// 歌單至少要留這麼多列，縮圖才有資格佔走底下那一塊。
+const PLAYLIST_MIN_ROWS: u16 = 6;
+
+/// 左欄的分配。放得下就切一塊給縮圖，放不下就整欄給歌單。
+fn split_left(area: Rect, wanted: bool) -> (Rect, Option<Rect>) {
+    if !wanted || area.height < COVER_ROWS + PLAYLIST_MIN_ROWS {
+        return (area, None);
+    }
+    let rows = Layout::vertical([
+        Constraint::Min(PLAYLIST_MIN_ROWS),
+        Constraint::Length(COVER_ROWS),
+    ])
+    .split(area);
+    (rows[0], Some(rows[1]))
+}
+
 /// 單欄時在標題前面標出 Tab 可以換到另一份清單。
 fn list_title(title: &str, narrow: bool) -> String {
     if narrow {
@@ -138,8 +157,18 @@ fn list_title(title: &str, narrow: bool) -> String {
 
 fn draw_lists(frame: &mut Frame, app: &mut App, area: Rect, narrow: bool) {
     let columns = list_columns(area, narrow, app.focus);
+    app.cover_rect = None;
 
     if let Some(column) = columns[0] {
+        // 正在播、而且終端機畫得出圖，才替縮圖留位置。
+        let wants_cover = !narrow && app.now.is_some() && crate::cover::supported();
+        let (column, cover) = split_left(column, wants_cover);
+        if let Some(cover) = cover {
+            let block = panel(&app.theme, "縮圖", false);
+            app.cover_rect = Some(block.inner(cover));
+            frame.render_widget(block, cover);
+        }
+
         let playlist_width = column.width.saturating_sub(3) as usize;
         let playlist_items: Vec<ListItem> = app
             .library
@@ -499,6 +528,27 @@ mod tests {
         let on_playlists = list_columns(area, true, Focus::Playlists);
         assert_eq!(on_playlists[0].map(|r| r.width), Some(50));
         assert!(on_playlists[1].is_none(), "焦點在歌單時清單讓位");
+    }
+
+    #[test]
+    fn the_cover_takes_the_bottom_of_the_left_column() {
+        let column = Rect::new(0, 0, 40, 22);
+        let (playlists, cover) = split_left(column, true);
+        assert_eq!(cover.map(|r| r.height), Some(COVER_ROWS));
+        assert_eq!(playlists.height, 22 - COVER_ROWS);
+        assert_eq!(cover.map(|r| r.y), Some(22 - COVER_ROWS));
+    }
+
+    #[test]
+    fn a_short_column_keeps_every_row_for_the_playlists() {
+        let column = Rect::new(0, 0, 40, COVER_ROWS + PLAYLIST_MIN_ROWS - 1);
+        let (playlists, cover) = split_left(column, true);
+        assert!(cover.is_none(), "放不下就不切");
+        assert_eq!(playlists.height, column.height);
+
+        let (playlists, cover) = split_left(Rect::new(0, 0, 40, 30), false);
+        assert!(cover.is_none(), "沒有要畫就不切");
+        assert_eq!(playlists.height, 30);
     }
 
     #[test]

@@ -6,6 +6,7 @@ mod audio;
 mod cache;
 mod cli;
 mod control;
+mod cover;
 mod history;
 mod loudness;
 mod mcp;
@@ -232,10 +233,10 @@ async fn main() -> Result<()> {
         println!("日誌寫在 {}", path.display());
     }
 
-    // 問終端機現在的配色，給主題的 `palette: "auto"` 用。要在進入畫面之前做，
-    // 否則回覆會和按鍵事件混在一起。
-    let detected = probe::query();
-    match detected.as_ref() {
+    // 問終端機現在的配色和畫不畫得出圖。要在進入畫面之前做，否則回覆會和
+    // 按鍵事件混在一起。
+    let probed = probe::query();
+    match probed.palette.as_ref() {
         Some(palette) => log::info!(
             "終端機回報配色：前景 {:?}、背景 {:?}",
             palette.foreground,
@@ -243,7 +244,16 @@ async fn main() -> Result<()> {
         ),
         None => log::info!("終端機沒有回報配色，palette: \"auto\" 會退回內建主題"),
     }
-    theme::detect(detected);
+    log::info!(
+        "終端機圖形協定：{}",
+        if probed.graphics {
+            "支援，歌單底下會顯示縮圖"
+        } else {
+            "沒有回應，不顯示縮圖"
+        }
+    );
+    theme::detect(probed.palette);
+    cover::detect(probed.graphics);
 
     let terminal = ratatui::init();
     let result = run(
@@ -255,6 +265,7 @@ async fn main() -> Result<()> {
         theme_preset,
     )
     .await;
+    cover::clear();
     ratatui::restore();
     control::cleanup();
     result
@@ -302,6 +313,8 @@ async fn run(
 
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
+        // 圖要畫在文字之上，所以等這一幀的文字都寫完再送。
+        app.sync_cover();
 
         let Some(msg) = rx.recv().await else { break };
         app.handle(msg);

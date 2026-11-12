@@ -2,7 +2,7 @@
 
 use crate::{
     audio::{AudioEvent, AudioPlayer},
-    cache,
+    cache, cover,
     loudness::{self, Measurement},
     store::Library,
     theme::Theme,
@@ -10,6 +10,7 @@ use crate::{
 };
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
+    layout::Rect,
     widgets::ListState,
 };
 use std::{
@@ -42,9 +43,20 @@ pub enum Msg {
         /// 這個電台的種子。
         seed: Video,
     },
-    Ready { video_id: String, path: PathBuf },
+    Ready {
+        video_id: String,
+        path: PathBuf,
+    },
     /// 種子的風格標籤查回來了。
-    SeedTags { video_id: String, tags: Vec<String> },
+    SeedTags {
+        video_id: String,
+        tags: Vec<String>,
+    },
+    /// 背景抓好並解開了一首的縮圖。
+    Cover {
+        video_id: String,
+        image: Box<cover::Image>,
+    },
     /// 背景量測完一首的響度。
     Loudness {
         video_id: String,
@@ -133,6 +145,12 @@ pub struct App {
     theme_preset: Option<String>,
     /// 主題檔上次讀到的修改時間，用來察覺外部改動。
     theme_mtime: Option<SystemTime>,
+    /// 目前這首的縮圖，解開之後放著重複使用。
+    cover: Option<cover::Image>,
+    /// 畫面替縮圖留的位置，由版面決定，沒有就是這次不畫。
+    pub cover_rect: Option<Rect>,
+    /// 已經畫上去的是哪一首、畫在哪裡，用來判斷要不要重送。
+    cover_shown: Option<(String, Rect)>,
 }
 
 impl App {
@@ -179,7 +197,65 @@ impl App {
             theme: crate::theme::load(theme_preset.as_deref()),
             theme_mtime: crate::theme::mtime(),
             theme_preset,
+            cover: None,
+            cover_rect: None,
+            cover_shown: None,
         }
+    }
+
+    /// 把縮圖畫到版面留好的位置。每畫完一幀呼叫一次，位置或曲目沒變就什麼都不做。
+    pub fn sync_cover(&mut self) {
+        if !cover::supported() {
+            return;
+        }
+        let Some(rect) = self.cover_rect else {
+            if self.cover_shown.take().is_some() {
+                cover::clear();
+            }
+            return;
+        };
+        let (Some(image), Some(now)) = (self.cover.as_ref(), self.now.as_ref()) else {
+            return;
+        };
+        let key = (now.video.id.clone(), rect);
+        if self.cover_shown.as_ref() == Some(&key) {
+            return;
+        }
+        match cover::place(image, rect) {
+            Ok(()) => self.cover_shown = Some(key),
+            Err(e) => log::warn!("畫縮圖失敗：{e}"),
+        }
+    }
+
+    /// 換曲時把上一張收掉，並在背景抓新的一張。
+    fn load_cover(&mut self, video_id: String) {
+        if !cover::supported() {
+            return;
+        }
+        self.cover = None;
+        if self.cover_shown.take().is_some() {
+            cover::clear();
+        }
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let path = match cover::ensure(&video_id).await {
+                Ok(path) => path,
+                Err(e) => {
+                    log::warn!("抓 {video_id} 的縮圖失敗：{e}");
+                    return;
+                }
+            };
+            match tokio::task::spawn_blocking(move || cover::decode(&path)).await {
+                Ok(Ok(image)) => {
+                    let _ = tx.send(Msg::Cover {
+                        video_id,
+                        image: Box::new(image),
+                    });
+                }
+                Ok(Err(e)) => log::warn!("解 {video_id} 的縮圖失敗：{e}"),
+                Err(e) => log::warn!("解 {video_id} 的縮圖中斷：{e}"),
+            }
+        });
     }
 
     /// 寫狀態訊息，並記下時間：訊息擺一陣子之後換成電台種子資訊。
@@ -736,6 +812,7 @@ impl App {
             buffering: true,
         });
         self.apply_gain();
+        self.load_cover(video.id.clone());
 
         let tx = self.tx.clone();
         let id = video.id.clone();
@@ -992,8 +1069,21 @@ impl App {
                     measurement.gain_db()
                 );
                 self.loudness.insert(video_id.clone(), measurement);
-                if self.now.as_ref().is_some_and(|now| now.video.id == video_id) {
+                if self
+                    .now
+                    .as_ref()
+                    .is_some_and(|now| now.video.id == video_id)
+                {
                     self.apply_gain();
+                }
+            }
+            Msg::Cover { video_id, image } => {
+                if self
+                    .now
+                    .as_ref()
+                    .is_some_and(|now| now.video.id == video_id)
+                {
+                    self.cover = Some(*image);
                 }
             }
             Msg::Error(text) => {

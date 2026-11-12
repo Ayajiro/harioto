@@ -169,12 +169,14 @@ That same line is the progress bar. The part already played is shaded behind the
 - **Length check** — items with unknown length or longer than 20 minutes ask for a second `Enter` before playing, and are skipped during autoplay. This keeps livestreams and multi-hour compilations out of the queue.
 - **Loudness balance** — every track is measured once to EBU R128 integrated loudness and true peak, then played at a gain that brings it to -14 LUFS, bounded by ±12 dB and by a -1 dBTP ceiling so a lift never clips. Measuring runs on the prefetched file, about 0.7 s of one core for a seven-minute track, and the result is kept so a track is never measured twice. `g` turns the balance off and back on; the now-playing line shows the gain in effect.
 - **Pane size** — a short pane hides the frames and the idle search box so the lists keep their rows. A pane under 70 columns shows one list at a time, with `Tab` moving between the playlists and the queue, and splits the now-playing block in two so the title keeps a line of its own.
+- **Cover art** — the track's YouTube thumbnail is drawn under the playlists, in a panel the layout only reserves when the terminal answers a kitty graphics query at startup. The image is fetched once per track and kept, decoded in the background, and re-sent only when the track or the panel's position changes. A terminal that stays quiet gets the old layout, with the playlists filling the column.
 - **Cache cap** — the audio cache stops at 500 MB, evicting least-recently-played files. Playing a file refreshes its timestamp; deleting a file that is currently playing is harmless.
 - **yt-dlp freshness** — the version string is a release date. Past 60 days, the status bar suggests `brew upgrade yt-dlp`, since YouTube rotates its JavaScript challenge and a stale yt-dlp fails silently.
 
 ## Files
 
 - Audio cache — `~/Library/Caches/harioto/audio/` (`~/.cache/harioto/audio/` on Linux)
+- Thumbnail cache — `~/Library/Caches/harioto/thumbs/` (`~/.cache/harioto/thumbs/` on Linux)
 - Playlists — `~/.config/harioto/playlists.json`
 - Control socket — `~/.config/harioto/ctl.sock`, present only while a player runs
 - Theme — `~/.config/harioto/theme.json`, optional
