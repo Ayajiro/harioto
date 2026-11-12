@@ -106,12 +106,168 @@ pub fn preset(name: &str) -> Theme {
 struct File {
     preset: Option<String>,
     border: Option<Border>,
+    /// 終端機主題檔：路徑，或放在已知目錄裡的名稱。
+    palette: Option<String>,
     #[serde(default)]
     colors: HashMap<String, String>,
 }
 
+/// 從終端機主題檔讀出來的調色盤。
+#[derive(Clone, Copy, Debug)]
+pub struct Palette {
+    pub background: Color,
+    pub foreground: Color,
+    pub selection: Option<Color>,
+    pub ansi: [Color; 16],
+}
+
+/// Herdr 的主題檔：background、foreground、selection 與 16 色 ansi 陣列。
+#[derive(Deserialize)]
+struct JsonPalette {
+    background: String,
+    foreground: String,
+    selection: Option<String>,
+    ansi: Vec<String>,
+}
+
+/// 找出主題檔。接受路徑，或是放在終端機主題目錄裡的名稱。
+fn resolve_palette(name: &str) -> Option<PathBuf> {
+    let expanded = if let Some(rest) = name.strip_prefix("~/") {
+        dirs::home_dir()?.join(rest)
+    } else {
+        PathBuf::from(name)
+    };
+    if expanded.is_file() {
+        return Some(expanded);
+    }
+
+    let home = dirs::home_dir()?;
+    let candidates = [
+        crate::store::config_dir().join("themes").join(name),
+        crate::store::config_dir()
+            .join("themes")
+            .join(format!("{name}.json")),
+        home.join(".config/herdr-app/themes")
+            .join(format!("{name}.json")),
+        home.join(".config/ghostty/themes").join(name),
+        PathBuf::from("/Applications/Ghostty.app/Contents/Resources/ghostty/themes").join(name),
+    ];
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+/// 讀主題檔。先當 JSON 解析，不成就當 ghostty 的 `鍵 = 值` 設定檔。
+fn read_palette(path: &std::path::Path) -> Option<Palette> {
+    let text = std::fs::read_to_string(path).ok()?;
+    parse_palette(&text)
+}
+
+fn parse_palette(text: &str) -> Option<Palette> {
+    if let Ok(json) = serde_json::from_str::<JsonPalette>(text) {
+        if json.ansi.len() < 16 {
+            log::warn!("主題檔的 ansi 只有 {} 色，需要 16 色", json.ansi.len());
+            return None;
+        }
+        let mut ansi = [Color::Reset; 16];
+        for (slot, value) in ansi.iter_mut().zip(json.ansi.iter()) {
+            *slot = parse_color(value)?;
+        }
+        return Some(Palette {
+            background: parse_color(&json.background)?,
+            foreground: parse_color(&json.foreground)?,
+            selection: json.selection.as_deref().and_then(parse_color),
+            ansi,
+        });
+    }
+
+    // ghostty 格式：`palette = 4=#61afef`、`background = 282c34`，`#` 開頭是註解。
+    let mut ansi = [None; 16];
+    let mut background = None;
+    let mut foreground = None;
+    let mut selection = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let (key, value) = (key.trim(), value.trim());
+        let hex = |v: &str| parse_color(&with_hash(v));
+        match key {
+            "background" => background = hex(value),
+            "foreground" => foreground = hex(value),
+            "selection-background" => selection = hex(value),
+            "palette" => {
+                if let Some((index, colour)) = value.split_once('=')
+                    && let Ok(index) = index.trim().parse::<usize>()
+                    && index < 16
+                {
+                    ansi[index] = hex(colour.trim());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let filled: Vec<Color> = ansi.iter().flatten().copied().collect();
+    if filled.len() < 16 {
+        return None;
+    }
+    let mut slots = [Color::Reset; 16];
+    for (slot, colour) in slots.iter_mut().zip(filled) {
+        *slot = colour;
+    }
+    Some(Palette {
+        background: background?,
+        foreground: foreground?,
+        selection,
+        ansi: slots,
+    })
+}
+
+/// ghostty 的色值可以省略 `#`，補回來再交給共用的解析。
+fn with_hash(value: &str) -> String {
+    let value = value.trim();
+    if value.starts_with('#') || value.len() != 6 {
+        value.to_string()
+    } else {
+        format!("#{value}")
+    }
+}
+
+/// 把調色盤攤在主題上：文字、次要色、強調色都從終端機主題取。
+fn apply_palette(theme: &mut Theme, palette: &Palette) {
+    theme.text = palette.foreground;
+    theme.muted = palette.ansi[7];
+    theme.dim = palette.ansi[8];
+    theme.accent = palette.ansi[1];
+    theme.on_accent = palette.background;
+    theme.selection_bg = palette.selection.unwrap_or(palette.ansi[1]);
+    theme.selection_fg = palette.background;
+    theme.gauge_track = palette.ansi[0];
+}
+
 pub fn path() -> PathBuf {
     crate::store::config_dir().join("theme.json")
+}
+
+/// 角色的色值，除了一般寫法外還能引用載入的調色盤：`ansi:4`、`fg`、`bg`、`selection`。
+fn parse_role_color(text: &str, palette: Option<&Palette>) -> Option<Color> {
+    let text = text.trim();
+    if let Some(palette) = palette {
+        if let Some(index) = text.strip_prefix("ansi:") {
+            let index: usize = index.trim().parse().ok()?;
+            return palette.ansi.get(index).copied();
+        }
+        match text {
+            "fg" | "foreground" => return Some(palette.foreground),
+            "bg" | "background" => return Some(palette.background),
+            "selection" => return palette.selection.or(Some(palette.ansi[1])),
+            _ => {}
+        }
+    }
+    parse_color(text)
 }
 
 /// 解析色值：`#rrggbb`、16 色名稱、256 色索引、`terminal`（繼承終端機）。
@@ -170,11 +326,28 @@ pub fn load(override_preset: Option<&str>) -> Theme {
         .unwrap_or_default();
 
     let mut theme = base;
+
+    // 終端機主題檔先鋪底，個別角色的設定再疊上去。
+    let palette = file.palette.as_deref().and_then(|name| {
+        let Some(path) = resolve_palette(name) else {
+            log::warn!("找不到終端機主題檔：{name}");
+            return None;
+        };
+        let found = read_palette(&path);
+        if found.is_none() {
+            log::warn!("終端機主題檔看不懂：{}", path.display());
+        }
+        found
+    });
+    if let Some(palette) = palette.as_ref() {
+        apply_palette(&mut theme, palette);
+    }
+
     if let Some(border) = file.border {
         theme.border = border;
     }
     for (role, value) in &file.colors {
-        let Some(color) = parse_color(value) else {
+        let Some(color) = parse_role_color(value, palette.as_ref()) else {
             log::warn!("主題的 {role} 寫了看不懂的色值：{value}");
             continue;
         };
@@ -252,6 +425,97 @@ mod tests {
         std::fs::write(path(), r#"{ "preset": "light" }"#).expect("寫入主題檔");
 
         assert_eq!(load(Some("mono")).text, Color::Reset);
+    }
+
+    const GHOSTTY: &str = "\
+# Atom One Dark
+background = 282c34
+foreground = abb2bf
+selection-background = 3e4451
+palette = 0=#3f4451
+palette = 1=#e05561
+palette = 2=#8cc265
+palette = 3=#d18f52
+palette = 4=#4aa5f0
+palette = 5=#c162de
+palette = 6=#42b3c2
+palette = 7=#e6e6e6
+palette = 8=#4f5666
+palette = 9=#ff616e
+palette = 10=#a5e075
+palette = 11=#f0a45d
+palette = 12=#4dc4ff
+palette = 13=#de73ff
+palette = 14=#4cd1e0
+palette = 15=#d7dae0
+";
+
+    #[test]
+    fn reads_a_ghostty_theme_file() {
+        let palette = parse_palette(GHOSTTY).expect("解析 ghostty 主題");
+        assert_eq!(palette.background, Color::Rgb(0x28, 0x2c, 0x34));
+        assert_eq!(palette.foreground, Color::Rgb(0xab, 0xb2, 0xbf));
+        assert_eq!(palette.selection, Some(Color::Rgb(0x3e, 0x44, 0x51)));
+        assert_eq!(palette.ansi[4], Color::Rgb(0x4a, 0xa5, 0xf0));
+        assert_eq!(palette.ansi[15], Color::Rgb(0xd7, 0xda, 0xe0));
+    }
+
+    #[test]
+    fn reads_a_terminal_theme_in_json() {
+        let json = r##"{
+            "background": "#21252b",
+            "foreground": "#abb2bf",
+            "selection": "#323844",
+            "ansi": ["#454c59", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd",
+                     "#56b6c2", "#abb2bf", "#767676", "#e06c75", "#98c379", "#e5c07b",
+                     "#61afef", "#c678dd", "#56b6c2", "#abb2bf"]
+        }"##;
+        let palette = parse_palette(json).expect("解析 JSON 主題");
+        assert_eq!(palette.background, Color::Rgb(0x21, 0x25, 0x2b));
+        assert_eq!(palette.ansi[1], Color::Rgb(0xe0, 0x6c, 0x75));
+    }
+
+    #[test]
+    fn a_palette_fills_the_roles_and_overrides_still_win() {
+        let _guard = crate::store::CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("建立暫存目錄");
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", dir.path()) };
+        std::fs::create_dir_all(crate::store::config_dir()).expect("建立設定目錄");
+
+        let theme_file = crate::store::config_dir().join("one-dark.conf");
+        std::fs::write(&theme_file, GHOSTTY).expect("寫入終端機主題");
+        std::fs::write(
+            path(),
+            format!(
+                r##"{{ "palette": "{}", "colors": {{ "accent": "ansi:4", "gauge_track": "#101010" }} }}"##,
+                theme_file.display()
+            ),
+        )
+        .expect("寫入主題檔");
+
+        let theme = load(None);
+        // 角色從調色盤填滿。
+        assert_eq!(theme.text, Color::Rgb(0xab, 0xb2, 0xbf));
+        assert_eq!(theme.dim, Color::Rgb(0x4f, 0x56, 0x66));
+        assert_eq!(theme.selection_fg, Color::Rgb(0x28, 0x2c, 0x34));
+        // 明寫的角色蓋過調色盤。
+        assert_eq!(theme.accent, Color::Rgb(0x4a, 0xa5, 0xf0));
+        assert_eq!(theme.gauge_track, Color::Rgb(0x10, 0x10, 0x10));
+    }
+
+    #[test]
+    fn an_unreadable_palette_leaves_the_preset_alone() {
+        let _guard = crate::store::CONFIG_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("建立暫存目錄");
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", dir.path()) };
+        std::fs::create_dir_all(crate::store::config_dir()).expect("建立設定目錄");
+        std::fs::write(path(), r#"{ "palette": "沒有這個檔案" }"#).expect("寫入主題檔");
+
+        assert_eq!(load(None).accent, preset("ember").accent);
     }
 
     #[test]

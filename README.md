@@ -136,6 +136,18 @@ Three presets ship with it — `ember` (the default), `mono`, which paints every
 
 Roles: `accent`, `on_accent`, `text`, `muted`, `dim`, `selection_bg`, `selection_fg`, `gauge_track`. A colour is `#rrggbb`, a 16-colour name such as `bright_blue`, a 256-colour index, or `terminal` to inherit what the terminal already uses. `border` takes `rounded`, `plain`, `thick` or `none`; `none` drops the frames and gives four more rows to the lists, which matters in a split pane.
 
+### Borrowing the terminal's own theme
+
+`palette` points at a terminal theme file and fills every role from it, so the player wears the same colours as the terminal around it:
+
+```json
+{ "palette": "atom-one-dark", "colors": { "accent": "ansi:4" } }
+```
+
+Two formats are read: a Ghostty theme (`palette = 4=#61afef`, `background`, `foreground`, `selection-background`, with or without the `#`), and a JSON file holding `background`, `foreground`, an optional `selection` and sixteen `ansi` entries. A bare name is looked up in `~/.config/harioto/themes/`, `~/.config/herdr-app/themes/`, `~/.config/ghostty/themes/` and Ghostty's bundled themes; anything with a slash is taken as a path.
+
+The palette fills the roles — text from the foreground, muted and dim from ansi 7 and 8, accent from ansi 1, the selected row from the selection colour — and anything named under `colors` still wins. There, a value may also be `ansi:0` through `ansi:15`, `fg`, `bg` or `selection`. A palette that cannot be found or parsed is skipped, with the reason in the log, and the preset stands.
+
 The file is re-read within a quarter of a second of being saved, so a colour edit lands without restarting the player. A file that does not parse is ignored, with the reason in the log.
 
 ## Radio

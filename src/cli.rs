@@ -37,6 +37,7 @@ harioto — 終端機裡的電台
   --json     以 JSON 輸出，給程式讀
   --limit N  筆數上限
   --theme    內建主題：ember、mono、light，覆寫 ~/.config/harioto/theme.json
+             主題檔的 palette 可以指向終端機主題（ghostty 或 JSON 格式），套用它的配色
 ";
 
 /// 找出 `--limit N`，沒給就用預設值。
