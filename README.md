@@ -1,5 +1,8 @@
 # harioto
 
+[![crates.io](https://img.shields.io/crates/v/harioto.svg)](https://crates.io/crates/harioto)
+[![license](https://img.shields.io/crates/l/harioto.svg)](LICENSE)
+
 *Harioto* (針音) is the faint hiss of a stylus tracking a record groove.
 
 A terminal radio written in Rust. Seed it with one song and it keeps playing, following YouTube's mix recommendations. Around 16 MB resident, 3.4 MB binary.
