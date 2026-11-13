@@ -9,6 +9,7 @@ homepage = "https://crates.io/crates/harioto"
 readme = "README.md"
 keywords = ["music", "radio", "tui", "youtube", "player"]
 categories = ["command-line-utilities", "multimedia::audio"]
+exclude = ["docs/"]
 
 [dependencies]
 anyhow = "1.0.104"
