@@ -1,4 +1,10 @@
-# Record the README demo:  vhs docs/demo.tape
+# A scripted run of the player:  vhs docs/demo.tape
+#
+# This is not how docs/demo.gif was made. vhs renders through xterm.js,
+# which does not speak the kitty graphics protocol, so the cover art never
+# appears in what it records; the published GIF was captured frame by frame
+# from a terminal that does. Keep this tape for a quick look at the flow on
+# any machine, and for checking the layout after a change.
 #
 # Needs vhs (brew install vhs) and a release build in place.
 # The run is sent to a scratch config and cache under target/demo, so it

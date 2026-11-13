@@ -8,7 +8,7 @@
 
 A terminal radio written in Rust. Seed it with one song and it keeps playing, following YouTube's mix recommendations. Around 16 MB resident, 4 MB binary.
 
-![harioto building a radio from one song](https://raw.githubusercontent.com/Ayajiro/harioto/main/docs/demo.gif)
+![harioto building a hundred-track radio from one song, cover art and all](https://raw.githubusercontent.com/Ayajiro/harioto/main/docs/demo.gif)
 
 ## How it differs
 
