@@ -109,6 +109,7 @@ pub fn decode(path: &Path) -> Result<Image> {
 }
 
 /// 一個字格有多少像素。終端機不回報就用猜的，比例仍然接近。
+#[cfg(unix)]
 fn cell_pixels() -> (u32, u32) {
     let mut size: libc::winsize = unsafe { std::mem::zeroed() };
     let ok = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) } == 0;
@@ -118,6 +119,11 @@ fn cell_pixels() -> (u32, u32) {
             (size.ws_ypixel / size.ws_row) as u32,
         );
     }
+    FALLBACK_CELL
+}
+
+#[cfg(windows)]
+fn cell_pixels() -> (u32, u32) {
     FALLBACK_CELL
 }
 

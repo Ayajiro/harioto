@@ -157,6 +157,43 @@ fn tools() -> Value {
                 "properties": { "limit": { "type": "integer", "description": "How many at most; 50 by default" } },
             },
         },
+        {
+            "name": "harioto_ctl",
+            "description": "Control a running harioto player: check status, play a track, open a radio, queue a track, pause/resume/toggle, skip next/prev, stop, adjust volume, toggle loudness normalization, or remove a track.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "enum": [
+                            "status",
+                            "play",
+                            "radio",
+                            "queue",
+                            "pause",
+                            "resume",
+                            "toggle",
+                            "next",
+                            "prev",
+                            "stop",
+                            "volume",
+                            "normalize",
+                            "remove",
+                        ],
+                        "description": "Control command to send to the running player",
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Video id, YouTube url, or search words for play/radio/queue/remove; on/off/toggle for normalize; or volume level (0-100) if level is omitted",
+                    },
+                    "level": {
+                        "type": "integer",
+                        "description": "Volume level (0-100) when command is volume",
+                    },
+                },
+                "required": ["command"],
+            },
+        },
     ])
 }
 
@@ -215,6 +252,29 @@ async fn call(id: Value, params: Value) -> Value {
         }
         "harioto_history" => Ok(json!({ "entries": api::history(number("limit", 50)) })),
         "harioto_seeds" => Ok(json!({ "entries": api::seeds(number("limit", 50)) })),
+        "harioto_ctl" => {
+            let command = text("command");
+            let target = text("target");
+            let mut payload = json!({ "command": command });
+            if command == "volume" {
+                if let Some(level) = args
+                    .get("level")
+                    .and_then(Value::as_u64)
+                    .or_else(|| target.trim().parse::<u64>().ok())
+                {
+                    payload["level"] = Value::from(level);
+                }
+            } else if !target.is_empty() {
+                payload["target"] = Value::from(target);
+            }
+            match crate::control::request(payload).await {
+                Ok(answer) => match answer.get("error").and_then(Value::as_str) {
+                    Some(msg) => Err(anyhow::anyhow!("{msg}")),
+                    None => Ok(answer),
+                },
+                Err(e) => Err(e),
+            }
+        }
         other => {
             return error(id, -32602, format!("unknown tool: {other}"));
         }
@@ -223,5 +283,22 @@ async fn call(id: Value, params: Value) -> Value {
     match outcome {
         Ok(payload) => success(id, content(payload, false)),
         Err(e) => success(id, content(json!({ "error": e.to_string() }), true)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lists_all_nine_tools_including_ctl() {
+        let list = tools();
+        let arr = list.as_array().expect("tools array");
+        assert_eq!(arr.len(), 9);
+        let names: Vec<&str> = arr
+            .iter()
+            .filter_map(|t| t.get("name").and_then(Value::as_str))
+            .collect();
+        assert!(names.contains(&"harioto_ctl"));
     }
 }

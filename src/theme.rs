@@ -537,7 +537,7 @@ palette = 15=#d7dae0
             path(),
             format!(
                 r##"{{ "palette": "{}", "colors": {{ "accent": "ansi:4", "gauge_track": "#101010" }} }}"##,
-                theme_file.display()
+                theme_file.to_string_lossy().replace('\\', "/")
             ),
         )
         .expect("寫入主題檔");

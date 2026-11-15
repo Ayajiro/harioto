@@ -1,6 +1,6 @@
 [package]
 name = "harioto"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "A terminal radio in Rust: seed it one song, it keeps playing"
 license = "MIT"
@@ -9,7 +9,6 @@ homepage = "https://crates.io/crates/harioto"
 readme = "README.md"
 keywords = ["music", "radio", "tui", "youtube", "player"]
 categories = ["command-line-utilities", "multimedia::audio"]
-exclude = ["docs/"]
 
 [dependencies]
 anyhow = "1.0.104"

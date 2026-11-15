@@ -2,13 +2,10 @@
 
 [![crates.io](https://img.shields.io/crates/v/harioto.svg)](https://crates.io/crates/harioto)
 [![license](https://img.shields.io/crates/l/harioto.svg)](LICENSE)
-[![CI](https://github.com/Ayajiro/harioto/actions/workflows/ci.yml/badge.svg)](https://github.com/Ayajiro/harioto/actions/workflows/ci.yml)
 
 *Harioto* (針音) is the faint hiss of a stylus tracking a record groove.
 
 A terminal radio written in Rust. Seed it with one song and it keeps playing, following YouTube's mix recommendations. Around 16 MB resident, 4 MB binary.
-
-![harioto building a hundred-track radio from one song, cover art and all](https://raw.githubusercontent.com/Ayajiro/harioto/main/docs/demo.gif)
 
 ## How it differs
 
@@ -22,10 +19,10 @@ The audio comes through `yt-dlp` and is decoded locally. What you point it at, a
 
 ## Requirements
 
-- `yt-dlp` — `brew install yt-dlp` on macOS, `pipx install yt-dlp` elsewhere. Distribution packages often lag months behind, and a stale yt-dlp fails silently.
+- `yt-dlp` — `brew install yt-dlp`
 - `curl`, for cover art only — already on macOS and most Linux systems
 - Rust toolchain (built with 1.99.1)
-- macOS, or Linux with the ALSA headers in place. `rodio` reaches the sound card through `cpal`, which links ALSA, so the build needs `libasound2-dev` on Debian and Ubuntu, or `alsa-lib-devel` on Fedora. Without them the build stops inside `alsa-sys` with a pkg-config error.
+- macOS or Linux
 
 ## Install
 
@@ -191,7 +188,7 @@ The progress bar shares a row with the volume and the loudness gain, inside the 
 - **Pane size** — a short pane hides the frames and the idle search box so the lists keep their rows. A pane under 70 columns shows one list at a time, with `Tab` moving between the playlists and the queue, and gives the now-playing block a third row so the title, the channel and the progress bar each get their own.
 - **Cover art** — the track's YouTube thumbnail is drawn under the playlists, in a panel the layout only reserves when the terminal answers a kitty graphics query at startup. The image is fetched once per track with `curl` and kept, decoded in the background, and re-sent only when the track or the panel's position changes. Shelling out keeps a TLS and HTTP/2 stack out of the binary, which a single thumbnail does not justify. A terminal that stays quiet gets the old layout, with the playlists filling the column. `i` turns the panel off and back on for the session; `cover: false` in the theme file keeps it off, and re-reading that file takes the key's word back.
 - **Cache cap** — the audio cache stops at 500 MB, evicting least-recently-played files. Playing a file refreshes its timestamp; deleting a file that is currently playing is harmless.
-- **yt-dlp freshness** — the version string is a release date. Past 60 days, the status bar suggests updating it — `brew upgrade yt-dlp` on macOS, `pipx upgrade yt-dlp` elsewhere — since YouTube rotates its JavaScript challenge and a stale yt-dlp fails silently.
+- **yt-dlp freshness** — the version string is a release date. Past 60 days, the status bar suggests `brew upgrade yt-dlp`, since YouTube rotates its JavaScript challenge and a stale yt-dlp fails silently.
 
 ## Files
 

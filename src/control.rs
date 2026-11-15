@@ -10,7 +10,10 @@ use crate::youtube::{self, Video};
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 use std::path::PathBuf;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+#[cfg(windows)]
+use tokio::net::{TcpListener, TcpStream};
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
@@ -54,23 +57,59 @@ pub async fn serve(tx: UnboundedSender<Msg>) -> Result<()> {
             .map_err(|e| anyhow!("could not create the config directory: {e}"))?;
     }
 
-    if UnixStream::connect(&path).await.is_ok() {
-        return Err(anyhow!("another player already holds the control socket"));
+    #[cfg(unix)]
+    {
+        if UnixStream::connect(&path).await.is_ok() {
+            return Err(anyhow!("another player already holds the control socket"));
+        }
+        let _ = std::fs::remove_file(&path);
+
+        let listener = UnixListener::bind(&path)
+            .map_err(|e| anyhow!("could not open the control socket: {e}"))?;
+        log::info!("control socket: {}", path.display());
+
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let (reader, writer) = stream.into_split();
+                if let Err(e) = handle_connection(reader, writer, tx).await {
+                    log::warn!("control connection ended: {e}");
+                }
+            });
+        }
     }
-    let _ = std::fs::remove_file(&path);
 
-    let listener =
-        UnixListener::bind(&path).map_err(|e| anyhow!("could not open the control socket: {e}"))?;
-    log::info!("control socket: {}", path.display());
-
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, tx).await {
-                log::warn!("control connection ended: {e}");
+    #[cfg(windows)]
+    {
+        if let Ok(addr) = std::fs::read_to_string(&path) {
+            let addr = addr.trim();
+            if !addr.is_empty() && TcpStream::connect(addr).await.is_ok() {
+                return Err(anyhow!("another player already holds the control socket"));
             }
-        });
+        }
+        let _ = std::fs::remove_file(&path);
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .map_err(|e| anyhow!("could not open the control socket: {e}"))?;
+        let addr = listener
+            .local_addr()
+            .map_err(|e| anyhow!("could not read the control socket address: {e}"))?;
+        std::fs::write(&path, addr.to_string())
+            .map_err(|e| anyhow!("could not write the control socket file: {e}"))?;
+        log::info!("control socket: {} ({})", path.display(), addr);
+
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let (reader, writer) = stream.into_split();
+                if let Err(e) = handle_connection(reader, writer, tx).await {
+                    log::warn!("control connection ended: {e}");
+                }
+            });
+        }
     }
 }
 
@@ -79,8 +118,15 @@ pub fn cleanup() {
     let _ = std::fs::remove_file(socket_path());
 }
 
-async fn handle_connection(stream: UnixStream, tx: UnboundedSender<Msg>) -> Result<()> {
-    let (reader, mut writer) = stream.into_split();
+async fn handle_connection<R, W>(
+    reader: R,
+    mut writer: W,
+    tx: UnboundedSender<Msg>,
+) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut lines = BufReader::new(reader).lines();
 
     while let Some(line) = lines.next_line().await? {
@@ -205,11 +251,23 @@ async fn resolve(target: &str) -> Result<Video> {
 /// 客戶端：連上播放器、送一個請求、取回一行回應。
 pub async fn request(payload: Value) -> Result<Value> {
     let path = socket_path();
-    let stream = UnixStream::connect(&path)
-        .await
-        .map_err(|_| anyhow!("no running player at {}", path.display()))?;
+    #[cfg(unix)]
+    let (reader, mut writer) = {
+        let stream = UnixStream::connect(&path)
+            .await
+            .map_err(|_| anyhow!("no running player at {}", path.display()))?;
+        stream.into_split()
+    };
+    #[cfg(windows)]
+    let (reader, mut writer) = {
+        let addr = std::fs::read_to_string(&path)
+            .map_err(|_| anyhow!("no running player at {}", path.display()))?;
+        let stream = TcpStream::connect(addr.trim())
+            .await
+            .map_err(|_| anyhow!("no running player at {}", path.display()))?;
+        stream.into_split()
+    };
 
-    let (reader, mut writer) = stream.into_split();
     writer
         .write_all(serde_json::to_string(&payload)?.as_bytes())
         .await?;

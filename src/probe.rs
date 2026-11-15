@@ -9,9 +9,10 @@
 
 use crate::theme::Palette;
 use ratatui::style::Color;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 use std::{
     io::{IsTerminal, Read, Write},
-    os::fd::AsRawFd,
     time::{Duration, Instant},
 };
 
@@ -27,13 +28,27 @@ pub struct Probe {
     pub graphics: bool,
 }
 
+/// 檢查環境變數是否表明終端機支援 Kitty 圖形協定（如 ghostty、kitty、WezTerm）。
+fn env_supports_graphics() -> bool {
+    if std::env::var_os("KITTY_WINDOW_ID").is_some() {
+        return true;
+    }
+    let Ok(prog) = std::env::var("TERM_PROGRAM") else {
+        return false;
+    };
+    matches!(
+        prog.trim().to_ascii_lowercase().as_str(),
+        "ghostty" | "kitty" | "wezterm"
+    )
+}
+
 /// 問終端機配色與圖形支援。不是終端機時兩項都當成沒有。
 pub fn query() -> Probe {
     let mut stdout = std::io::stdout();
     if !stdout.is_terminal() || !std::io::stdin().is_terminal() {
         return Probe {
             palette: None,
-            graphics: false,
+            graphics: env_supports_graphics(),
         };
     }
 
@@ -59,7 +74,7 @@ pub fn query() -> Probe {
     let answer = String::from_utf8_lossy(&answer).into_owned();
     Probe {
         palette: parse(&answer),
-        graphics: has_graphics(&answer),
+        graphics: has_graphics(&answer) || env_supports_graphics(),
     }
 }
 
@@ -78,6 +93,7 @@ fn has_graphics(answer: &str) -> bool {
 }
 
 /// 讀到看見 DA1 回覆或時間用完為止；看到 DA1 之後再多讀一小段。
+#[cfg(unix)]
 fn read_answer() -> Vec<u8> {
     let stdin = std::io::stdin();
     let fd = stdin.as_raw_fd();
@@ -108,6 +124,49 @@ fn read_answer() -> Vec<u8> {
         if ends_with_da1(&collected) {
             // 圖形的答案可能還在路上，把期限縮成一小段寬限時間。
             deadline = (started.elapsed() + GRACE).min(BUDGET + GRACE);
+        }
+    }
+    collected
+}
+
+/// Windows 下透過背景執行緒與 channel recv_timeout 讀取終端機的 OSC/Kitty/DA1 回覆。
+#[cfg(windows)]
+fn read_answer() -> Vec<u8> {
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let env_gfx = env_supports_graphics();
+    std::thread::spawn(move || {
+        let mut stdin = std::io::stdin();
+        let mut buf = [0u8; 1024];
+        let mut seen = Vec::new();
+        while let Ok(n) = stdin.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            seen.extend_from_slice(&buf[..n]);
+            if tx.send(buf[..n].to_vec()).is_err() {
+                break;
+            }
+            let text = String::from_utf8_lossy(&seen);
+            if ends_with_da1(&seen) && (env_gfx || has_graphics(&text)) {
+                break;
+            }
+        }
+    });
+
+    let started = Instant::now();
+    let mut collected = Vec::new();
+    let mut deadline = BUDGET;
+
+    while started.elapsed() < deadline {
+        let remaining = deadline.saturating_sub(started.elapsed());
+        match rx.recv_timeout(remaining.max(Duration::from_millis(1))) {
+            Ok(chunk) => {
+                collected.extend_from_slice(&chunk);
+                if ends_with_da1(&collected) {
+                    deadline = (started.elapsed() + GRACE).min(BUDGET + GRACE);
+                }
+            }
+            Err(_) => break,
         }
     }
     collected
