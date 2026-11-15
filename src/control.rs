@@ -118,11 +118,7 @@ pub fn cleanup() {
     let _ = std::fs::remove_file(socket_path());
 }
 
-async fn handle_connection<R, W>(
-    reader: R,
-    mut writer: W,
-    tx: UnboundedSender<Msg>,
-) -> Result<()>
+async fn handle_connection<R, W>(reader: R, mut writer: W, tx: UnboundedSender<Msg>) -> Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
