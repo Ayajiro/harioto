@@ -208,6 +208,22 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    // `--max-minutes <N>` 改掉「多長算太長」的門檻，0 表示完全不攔。
+    let max_minutes = match args.iter().position(|a| a == "--max-minutes") {
+        Some(pos) => match args.get(pos + 1).map(|v| v.parse::<u32>()) {
+            Some(Ok(minutes)) => Some(minutes),
+            _ => {
+                eprintln!(
+                    "--max-minutes needs a whole number of minutes, or 0 to drop the limit. \
+                     The default is {}.",
+                    app::DEFAULT_MAX_MINUTES
+                );
+                std::process::exit(1);
+            }
+        },
+        None => None,
+    };
+
     let startup_note = match youtube::version().await {
         Ok(version) => {
             println!("yt-dlp {version} ready");
@@ -281,9 +297,12 @@ async fn main() -> Result<()> {
         audio,
         event_tx,
         &mut event_rx,
-        startup_note,
-        theme_preset,
-        lang_flag,
+        app::Startup {
+            note: startup_note,
+            theme_preset,
+            lang_flag,
+            max_minutes,
+        },
     )
     .await;
     cover::clear();
@@ -297,9 +316,7 @@ async fn run(
     audio: audio::AudioPlayer,
     tx: mpsc::UnboundedSender<Msg>,
     rx: &mut mpsc::UnboundedReceiver<Msg>,
-    startup_note: Option<String>,
-    theme_preset: Option<String>,
-    lang_flag: Option<String>,
+    startup: app::Startup,
 ) -> Result<()> {
     // 鍵盤輸入在獨立執行緒讀取，避免阻塞 async 執行期。
     {
@@ -331,7 +348,7 @@ async fn run(
         });
     }
 
-    let mut app = App::new(audio, tx, startup_note, theme_preset, lang_flag);
+    let mut app = App::new(audio, tx, startup);
 
     while !app.should_quit {
         terminal.draw(|frame| ui::draw(frame, &mut app))?;

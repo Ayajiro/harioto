@@ -43,7 +43,7 @@ cargo run --release
 
 | Command | Effect |
 | --- | --- |
-| `harioto [--theme <name>] [--lang <name>]` | Start the player |
+| `harioto [--theme <name>] [--lang <name>] [--max-minutes N]` | Start the player |
 | `harioto search <query>` | Search YouTube |
 | `harioto radio <id\|url>` | Build a radio from one song, seed first |
 | `harioto playlist list\|show\|create\|add` | Local playlists |
@@ -186,7 +186,7 @@ The progress bar shares a row with the volume and the loudness gain, inside the 
 ## Behaviour
 
 - **Playback** — tracks download to the cache before playing, so seeking and replays are instant. The next track is prefetched while the current one plays.
-- **Length check** — items with unknown length or longer than 20 minutes ask for a second `Enter` before playing, and are skipped during autoplay. This keeps livestreams and multi-hour compilations out of the queue.
+- **Length check** — items with unknown length or longer than 20 minutes ask for a second `Enter` before playing, and are skipped during autoplay. This keeps livestreams and multi-hour compilations out of the queue. `--max-minutes N` moves that line, and `--max-minutes 0` removes it; a talk, a lecture or a DJ set needs the room, while the unknown-length check stays either way, since that is what a livestream looks like.
 - **Loudness balance** — every track is measured once to EBU R128 integrated loudness and true peak, then played at a gain that brings it to -14 LUFS, bounded by ±12 dB and by a -1 dBTP ceiling so a lift never clips. Measuring runs on the prefetched file, about 0.7 s of one core for a seven-minute track, and the result is kept so a track is never measured twice. `g` turns the balance off and back on; the now-playing line shows the gain in effect.
 - **Pane size** — a short pane hides the frames and the idle search box so the lists keep their rows. A pane under 70 columns shows one list at a time, with `Tab` moving between the playlists and the queue, and gives the now-playing block a third row so the title, the channel and the progress bar each get their own.
 - **Cover art** — the track's YouTube thumbnail is drawn under the playlists, in a panel the layout only reserves when the terminal answers a kitty graphics query at startup. The image is fetched once per track with `curl` and kept, decoded in the background, and re-sent only when the track or the panel's position changes. Shelling out keeps a TLS and HTTP/2 stack out of the binary, which a single thumbnail does not justify. A terminal that stays quiet gets the old layout, with the playlists filling the column. `i` turns the panel off and back on for the session; `cover: false` in the theme file keeps it off, and re-reading that file takes the key's word back.

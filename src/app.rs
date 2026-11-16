@@ -28,7 +28,8 @@ const STATUS_HOLD: Duration = Duration::from_secs(8);
 const SEARCH_LIMIT: usize = 30;
 const RADIO_LIMIT: usize = 100;
 /// 超過這個長度就先攔下來確認，通常是合輯或直播而不是單曲。
-const LONG_TRACK_MS: u32 = 20 * 60 * 1000;
+/// `--max-minutes` 改得動，給 0 就完全不攔。
+pub const DEFAULT_MAX_MINUTES: u32 = 20;
 /// 自動接續時最多連續跳過幾首過長的曲目。
 const MAX_AUTO_SKIP: usize = 10;
 
@@ -162,16 +163,30 @@ pub struct App {
     pub cover_rect: Option<Rect>,
     /// 已經畫上去的是哪一首、畫在哪裡，用來判斷要不要重送。
     cover_shown: Option<(String, Rect)>,
+    /// 超過幾毫秒就算過長。0 表示不設上限，由 `--max-minutes` 決定。
+    max_track_ms: u32,
+}
+
+/// 命令列給的啟動選項。分開傳會讓參數列長到 clippy 出聲，所以一起帶進來。
+pub struct Startup {
+    /// 啟動時要顯示的提醒，目前只有 yt-dlp 過舊這一句。
+    pub note: Option<String>,
+    /// `--theme` 指定的內建主題。
+    pub theme_preset: Option<String>,
+    /// `--lang` 指定的介面語言。
+    pub lang_flag: Option<String>,
+    /// `--max-minutes` 指定的過長門檻，沒給就用 `DEFAULT_MAX_MINUTES`。
+    pub max_minutes: Option<u32>,
 }
 
 impl App {
-    pub fn new(
-        mut audio: AudioPlayer,
-        tx: UnboundedSender<Msg>,
-        note: Option<String>,
-        theme_preset: Option<String>,
-        lang_flag: Option<String>,
-    ) -> Self {
+    pub fn new(mut audio: AudioPlayer, tx: UnboundedSender<Msg>, startup: Startup) -> Self {
+        let Startup {
+            note,
+            theme_preset,
+            lang_flag,
+            max_minutes,
+        } = startup;
         audio.set_volume(0.5);
         let theme = crate::theme::load(theme_preset.as_deref());
         crate::lang::choose(
@@ -222,6 +237,10 @@ impl App {
             cover: None,
             cover_rect: None,
             cover_shown: None,
+            // 分鐘乘出來可能溢位，所以用飽和乘法：大到離譜的值等同不設上限。
+            max_track_ms: max_minutes
+                .unwrap_or(DEFAULT_MAX_MINUTES)
+                .saturating_mul(60_000),
         }
     }
 
@@ -518,11 +537,11 @@ impl App {
     }
 
     /// 擋掉長度未知或過長的項目，回傳留下來的清單與被擋掉的數量。
-    fn playable_only(tracks: Vec<Video>) -> (Vec<Video>, usize) {
+    fn playable_only(tracks: Vec<Video>, max_track_ms: u32) -> (Vec<Video>, usize) {
         let total = tracks.len();
         let kept: Vec<Video> = tracks
             .into_iter()
-            .filter(|v| Self::too_long_reason(v).is_none())
+            .filter(|v| Self::too_long_reason(v, max_track_ms).is_none())
             .collect();
         let dropped = total - kept.len();
         (kept, dropped)
@@ -611,7 +630,7 @@ impl App {
                 start,
                 seed,
             } => {
-                let (tracks, dropped) = Self::playable_only(tracks);
+                let (tracks, dropped) = Self::playable_only(tracks, self.max_track_ms);
                 if tracks.is_empty() {
                     return serde_json::json!({ "error": "nothing in that list can be played" });
                 }
@@ -642,7 +661,7 @@ impl App {
                 "replace"
             }
             Control::Queue(tracks) => {
-                let (tracks, dropped) = Self::playable_only(tracks);
+                let (tracks, dropped) = Self::playable_only(tracks, self.max_track_ms);
                 if tracks.is_empty() {
                     return serde_json::json!({ "error": "nothing to queue" });
                 }
@@ -921,7 +940,7 @@ impl App {
     // ---------- 播放 ----------
 
     /// 判斷這首是不是長到不像單曲，回傳攔下來的理由。
-    fn too_long_reason(video: &Video) -> Option<String> {
+    fn too_long_reason(video: &Video, max_track_ms: u32) -> Option<String> {
         if video.duration_ms == 0 {
             return Some(
                 t!(
@@ -932,7 +951,7 @@ impl App {
                 .into(),
             );
         }
-        if video.duration_ms > LONG_TRACK_MS {
+        if max_track_ms > 0 && video.duration_ms > max_track_ms {
             return Some(tf!(
                 "長度 {}，可能是合輯或直播",
                 "Runs {}, probably a compilation or a livestream",
@@ -948,7 +967,7 @@ impl App {
         let Some(video) = self.tracks.get(index).cloned() else {
             return;
         };
-        if let Some(reason) = Self::too_long_reason(&video)
+        if let Some(reason) = Self::too_long_reason(&video, self.max_track_ms)
             && self.pending_confirm != Some(index)
         {
             self.pending_confirm = Some(index);
@@ -1069,7 +1088,7 @@ impl App {
             let Some(video) = self.tracks.get(index) else {
                 return;
             };
-            if Self::too_long_reason(video).is_none() {
+            if Self::too_long_reason(video, self.max_track_ms).is_none() {
                 if skipped > 0 {
                     log::info!("autoplay skipped {skipped} items that were too long");
                 }
@@ -1423,4 +1442,55 @@ fn spawn_measure(tx: UnboundedSender<Msg>, video_id: String, path: PathBuf) {
         }
         Err(e) => log::warn!("could not measure the loudness of {video_id}: {e}"),
     });
+}
+
+#[cfg(test)]
+mod length_tests {
+    use super::*;
+
+    fn video(minutes: u32) -> Video {
+        Video {
+            id: format!("v{minutes}"),
+            title: format!("{minutes} 分鐘"),
+            channel: "測試頻道".into(),
+            duration_ms: minutes * 60_000,
+        }
+    }
+
+    #[test]
+    fn the_default_limit_is_twenty_minutes() {
+        let limit = DEFAULT_MAX_MINUTES * 60_000;
+        assert!(App::too_long_reason(&video(19), limit).is_none());
+        assert!(App::too_long_reason(&video(20), limit).is_none());
+        assert!(App::too_long_reason(&video(21), limit).is_some());
+    }
+
+    #[test]
+    fn a_raised_limit_lets_longer_items_through() {
+        let limit = 90 * 60_000;
+        assert!(App::too_long_reason(&video(60), limit).is_none());
+        assert!(App::too_long_reason(&video(91), limit).is_some());
+    }
+
+    #[test]
+    fn zero_drops_the_limit_but_still_catches_livestreams() {
+        assert!(App::too_long_reason(&video(600), 0).is_none());
+
+        // 長度為 0 代表 yt-dlp 說不出長度，通常是直播。這條和分鐘數無關。
+        let mut live = video(5);
+        live.duration_ms = 0;
+        assert!(App::too_long_reason(&live, 0).is_some());
+    }
+
+    #[test]
+    fn filtering_reports_how_many_were_dropped() {
+        let tracks = vec![video(5), video(30), video(10), video(45)];
+        let (kept, dropped) = App::playable_only(tracks.clone(), 20 * 60_000);
+        assert_eq!(kept.len(), 2);
+        assert_eq!(dropped, 2);
+
+        let (kept, dropped) = App::playable_only(tracks, 0);
+        assert_eq!(kept.len(), 4);
+        assert_eq!(dropped, 0);
+    }
 }

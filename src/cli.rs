@@ -10,7 +10,7 @@ pub const HELP: &str = "\
 harioto - a radio in your terminal
 
 Usage:
-  harioto [--theme <name>] [--lang <name>]   Start the player
+  harioto [--theme <name>] [--lang <name>] [--max-minutes N]  Start the player
   harioto search <words> [--limit N]         Search YouTube
   harioto radio <video id or url> [--limit N]  Build a radio, seed first
   harioto playlist list                      List playlists
@@ -43,6 +43,9 @@ Options:
              palette set to auto asks the terminal itself at startup
   --lang     Interface language: zh, en, ja. Overrides the theme file's lang
              With neither, LC_ALL, LC_MESSAGES and LANG decide; English if they say nothing
+  --max-minutes N  How long a track may run before it needs a second Enter and is
+             skipped during autoplay. The default is 20, which keeps compilations and
+             livestreams out of the queue. 0 drops the limit and lets anything through
 ";
 
 /// 找出 `--limit N`，沒給就用預設值。
