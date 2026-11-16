@@ -32,7 +32,8 @@ fn stale_warning(version: &str) -> Option<String> {
         return None;
     }
     Some(format!(
-        "yt-dlp {version} is {days} days old; YouTube changes break stale copies silently, so try brew upgrade yt-dlp"
+        "yt-dlp {version} is {days} days old; YouTube changes break stale copies silently, so try {}",
+        youtube::upgrade_hint()
     ))
 }
 

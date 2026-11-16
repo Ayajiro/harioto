@@ -30,13 +30,39 @@ struct SearchResult {
     entries: Option<Vec<Entry>>,
 }
 
+/// yt-dlp 不在 PATH 上時給的安裝建議，依平台而異。
+///
+/// Linux 上各家發行版打包的 yt-dlp 常落後好幾個月，而過舊的 yt-dlp 會靜默失敗，
+/// 所以那裡建議 pipx 而不是系統的套件管理員。
+pub fn install_hint() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "brew install yt-dlp"
+    } else {
+        "pipx install yt-dlp"
+    }
+}
+
+/// 更新 yt-dlp 的建議，和安裝建議走同一套管道。
+pub fn upgrade_hint() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "brew upgrade yt-dlp"
+    } else {
+        "pipx upgrade yt-dlp"
+    }
+}
+
+/// yt-dlp 叫不起來時共用的錯誤，六個呼叫點說同一句話。
+fn missing() -> anyhow::Error {
+    anyhow!("yt-dlp is not installed; try {}", install_hint())
+}
+
 /// 確認 yt-dlp 存在，順便回報版本。
 pub async fn version() -> Result<String> {
     let output = Command::new("yt-dlp")
         .arg("--version")
         .output()
         .await
-        .map_err(|_| anyhow!("yt-dlp is not installed; try brew install yt-dlp"))?;
+        .map_err(|_| missing())?;
 
     if !output.status.success() {
         return Err(anyhow!("yt-dlp would not run"));
@@ -90,7 +116,7 @@ pub async fn search(query: &str, limit: usize) -> Result<Vec<Video>> {
         ])
         .output()
         .await
-        .map_err(|_| anyhow!("yt-dlp is not installed; try brew install yt-dlp"))?;
+        .map_err(|_| missing())?;
 
     if !output.status.success() {
         return Err(anyhow!(
@@ -122,7 +148,7 @@ pub async fn radio(video_id: &str, limit: usize) -> Result<Vec<Video>> {
         ])
         .output()
         .await
-        .map_err(|_| anyhow!("yt-dlp is not installed; try brew install yt-dlp"))?;
+        .map_err(|_| missing())?;
 
     if !output.status.success() {
         return Err(anyhow!(
@@ -155,7 +181,7 @@ pub async fn lookup(video_id: &str) -> Result<Video> {
         ])
         .output()
         .await
-        .map_err(|_| anyhow!("yt-dlp is not installed; try brew install yt-dlp"))?;
+        .map_err(|_| missing())?;
 
     if !output.status.success() {
         return Err(anyhow!(
@@ -252,7 +278,7 @@ pub async fn download(video_id: &str, dest_dir: &std::path::Path) -> Result<std:
         .arg(format!("https://www.youtube.com/watch?v={video_id}"))
         .output()
         .await
-        .map_err(|_| anyhow!("yt-dlp is not installed"))?;
+        .map_err(|_| missing())?;
 
     if !output.status.success() {
         return Err(anyhow!(
@@ -291,7 +317,7 @@ pub async fn tags(video_id: &str, title: &str, channel: &str) -> Result<Vec<Stri
         ])
         .output()
         .await
-        .map_err(|_| anyhow!("yt-dlp is not installed; try brew install yt-dlp"))?;
+        .map_err(|_| missing())?;
 
     if !output.status.success() {
         return Err(anyhow!("could not look up the tags"));
