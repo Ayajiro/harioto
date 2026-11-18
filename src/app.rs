@@ -73,6 +73,8 @@ pub enum Msg {
         reply: tokio::sync::oneshot::Sender<serde_json::Value>,
     },
     Error(String),
+    /// 背景問到 crates.io 上有比這份新的版本。
+    Update(String),
     Tick,
 }
 
@@ -1302,6 +1304,8 @@ impl App {
                     now.buffering = false;
                 }
             }
+            // 和 yt-dlp 過舊的提醒一樣，這一句帶著要照打的指令，所以不翻譯。
+            Msg::Update(note) => self.status = note,
         }
     }
 

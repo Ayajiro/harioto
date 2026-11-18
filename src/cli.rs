@@ -10,7 +10,7 @@ pub const HELP: &str = "\
 harioto - a radio in your terminal
 
 Usage:
-  harioto [--theme <name>] [--lang <name>] [--max-minutes N]  Start the player
+  harioto [--theme <name>] [--lang <name>] [--max-minutes N] [--no-update-check]  Start the player
   harioto search <words> [--limit N]         Search YouTube
   harioto radio <video id or url> [--limit N]  Build a radio, seed first
   harioto playlist list                      List playlists
@@ -46,6 +46,9 @@ Options:
   --max-minutes N  How long a track may run before it needs a second Enter and is
              skipped during autoplay. The default is 20, which keeps compilations and
              livestreams out of the queue. 0 drops the limit and lets anything through
+  --no-update-check  Skip asking crates.io whether a newer harioto is out. The check
+             runs in the background at most once a day; `update_check: false` in the
+             theme file turns it off for good
 ";
 
 /// 找出 `--limit N`，沒給就用預設值。

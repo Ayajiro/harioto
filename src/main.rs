@@ -15,6 +15,7 @@ mod probe;
 mod store;
 mod theme;
 mod ui;
+mod update;
 mod youtube;
 
 use anyhow::Result;
@@ -230,6 +231,10 @@ async fn main() -> Result<()> {
         None => None,
     };
 
+    // `--no-update-check` 這一次不要問 crates.io。設定檔裡的 `update_check: false`
+    // 則是長期關掉。
+    let no_update_check = args.iter().any(|a| a == "--no-update-check");
+
     let startup_note = match youtube::version().await {
         Ok(version) => {
             println!("yt-dlp {version} ready");
@@ -255,6 +260,16 @@ async fn main() -> Result<()> {
             }
         });
         println!("control socket: {}", control::socket_path().display());
+    }
+
+    // 版本檢查丟到背景：問不到、網路慢、或 crates.io 改了格式都不該拖住啟動。
+    if update::wanted(no_update_check) {
+        let update_tx = event_tx.clone();
+        tokio::spawn(async move {
+            if let Some(note) = update::check().await {
+                let _ = update_tx.send(Msg::Update(note));
+            }
+        });
     }
 
     let audio_tx = event_tx.clone();

@@ -43,7 +43,7 @@ cargo run --release
 
 | Command | Effect |
 | --- | --- |
-| `harioto [--theme <name>] [--lang <name>] [--max-minutes N]` | Start the player |
+| `harioto [--theme <name>] [--lang <name>] [--max-minutes N] [--no-update-check]` | Start the player |
 | `harioto search <query>` | Search YouTube |
 | `harioto radio <id\|url>` | Build a radio from one song, seed first |
 | `harioto playlist list\|show\|create\|add` | Local playlists |
@@ -198,7 +198,7 @@ Three presets ship with it — `ember` (the default), `mono`, which paints every
 }
 ```
 
-Roles: `accent`, `on_accent`, `text`, `muted`, `dim`, `selection_bg`, `selection_fg`, `gauge_track`. A colour is `#rrggbb`, a 16-colour name such as `bright_blue`, a 256-colour index, or `terminal` to inherit what the terminal already uses. `border` takes `rounded`, `plain`, `thick` or `none`; `none` drops the frames and gives four more rows to the lists, which matters in a split pane. `cover` set to `false` keeps the thumbnail off and its rows with the playlists.
+Roles: `accent`, `on_accent`, `text`, `muted`, `dim`, `selection_bg`, `selection_fg`, `gauge_track`. A colour is `#rrggbb`, a 16-colour name such as `bright_blue`, a 256-colour index, or `terminal` to inherit what the terminal already uses. `border` takes `rounded`, `plain`, `thick` or `none`; `none` drops the frames and gives four more rows to the lists, which matters in a split pane. `cover` set to `false` keeps the thumbnail off and its rows with the playlists. `update_check` set to `false` stops the version check from running at all.
 
 ### Borrowing the terminal's own theme
 
@@ -228,6 +228,7 @@ The progress bar shares a row with the volume and the loudness gain, inside the 
 
 - **Playback** — tracks download to the cache before playing, so seeking and replays are instant. The next track is prefetched while the current one plays.
 - **Output changes** — once a second the player asks which device the system is sending audio to, and the output itself reports when it has gone. When the answer changes — headphones walk out of Bluetooth range, a cable is pulled, the default output is switched in system settings — the stream moves to the new device, the track is put back at the second it reached, and it stays paused. Reconnecting does not start it again, since by then you are usually doing something else. The question goes to `cpal`, not to each system's own audio API, so the behaviour is the same on macOS, Windows and Linux.
+- **Version check** — once a day, in the background, the player asks crates.io whether a newer harioto is out, and says so on the status line if there is. The answer is kept in the config directory, so opening the player ten times in a day makes one request. It goes out through `curl`, carrying nothing but the program name, this version and the project URL. `--no-update-check` skips it for one run and `update_check: false` in the theme file stops it for good; with it off, nothing but yt-dlp and the thumbnails ever leaves the machine.
 - **Length check** — items with unknown length or longer than 20 minutes ask for a second `Enter` before playing, and are skipped during autoplay. This keeps livestreams and multi-hour compilations out of the queue. `--max-minutes N` moves that line, and `--max-minutes 0` removes it; a talk, a lecture or a DJ set needs the room, while the unknown-length check stays either way, since that is what a livestream looks like.
 - **Loudness balance** — every track is measured once to EBU R128 integrated loudness and true peak, then played at a gain that brings it to -14 LUFS, bounded by ±12 dB and by a -1 dBTP ceiling so a lift never clips. Measuring runs on the prefetched file, about 0.7 s of one core for a seven-minute track, and the result is kept so a track is never measured twice. `g` turns the balance off and back on; the now-playing line shows the gain in effect.
 - **Pane size** — a short pane hides the frames and the idle search box so the lists keep their rows. A pane under 70 columns shows one list at a time, with `Tab` moving between the playlists and the queue, and gives the now-playing block a third row so the title, the channel and the progress bar each get their own.
@@ -245,6 +246,7 @@ The progress bar shares a row with the volume and the loudness gain, inside the 
 - Loudness measurements — `~/.config/harioto/loudness.json`, one entry per track
 - Play history — `~/.config/harioto/history.jsonl`, last 10,000 entries
 - Radio seeds — `~/.config/harioto/seeds.jsonl`, last 2,000 entries
+- Version check — `~/.config/harioto/update.json`, the last answer from crates.io and when it was asked
 - Log — `~/Library/Caches/harioto/harioto.log`
 
 History and seeds hold links and titles only — video id, URL, title, channel, timestamp. No audio, no identifiers beyond the public video id.
