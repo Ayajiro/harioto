@@ -11,6 +11,7 @@ mod history;
 mod lang;
 mod loudness;
 mod mcp;
+mod media;
 mod probe;
 mod store;
 mod theme;
@@ -147,10 +148,35 @@ async fn selftest(query: &str) -> Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // 只有真的要開畫面的那一次才把主執行緒讓出去。子指令不碰系統的「播放中」，
+    // 也不該為了一次 `harioto ctl status` 開一個 NSApplication。
+    let opens_the_screen =
+        !cli::is_subcommand(&args) && !args.iter().any(|a| a == "--prune" || a == "--selftest");
+
+    // `--no-media-keys` 這一次不要接多媒體鍵，設定檔裡的 `media_keys: false`
+    // 則是長期關掉。
+    let no_media_keys = args.iter().any(|a| a == "--no-media-keys");
+
+    if opens_the_screen {
+        media::host(no_media_keys, move || player(args))
+    } else {
+        player(args)
+    }
+}
+
+/// 播放器本體。macOS 上這跑在自己的執行緒，主執行緒留給多媒體鍵的執行迴圈；
+/// 其他平台上它就是主執行緒。
+fn player(args: Vec<String>) -> Result<()> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(start(args))
+}
+
+async fn start(args: Vec<String>) -> Result<()> {
     // 子指令（search、radio、playlist、history、seeds、mcp）走命令列路徑，不進入畫面。
     // 這要排在開日誌之前：子指令和播放器共用同一個檔案，而開檔會把內容清掉，
     // 所以一次 `harioto ctl status` 就會洗掉播放器正在寫的紀錄。

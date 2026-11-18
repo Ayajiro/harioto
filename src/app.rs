@@ -75,6 +75,8 @@ pub enum Msg {
     Error(String),
     /// 背景問到 crates.io 上有比這份新的版本。
     Update(String),
+    /// 多媒體鍵或控制中心按下來的指令。沒有人在等回覆。
+    Media(crate::control::Control),
     Tick,
 }
 
@@ -167,6 +169,8 @@ pub struct App {
     cover_shown: Option<(String, Rect)>,
     /// 超過幾毫秒就算過長。0 表示不設上限，由 `--max-minutes` 決定。
     max_track_ms: u32,
+    /// 多媒體鍵的把手，同時負責讓系統的「播放中」跟上。
+    media: crate::media::Keys,
 }
 
 /// 命令列給的啟動選項。分開傳會讓參數列長到 clippy 出聲，所以一起帶進來。
@@ -195,6 +199,7 @@ impl App {
             lang_flag.as_deref(),
             theme.lang.map(crate::lang::Lang::name),
         );
+        let media = crate::media::connect(tx.clone());
         let library = Library::load();
         let mut playlist_state = ListState::default();
         if !library.playlists.is_empty() {
@@ -243,6 +248,7 @@ impl App {
             max_track_ms: max_minutes
                 .unwrap_or(DEFAULT_MAX_MINUTES)
                 .saturating_mul(60_000),
+            media,
         }
     }
 
@@ -1306,7 +1312,15 @@ impl App {
             }
             // 和 yt-dlp 過舊的提醒一樣，這一句帶著要照打的指令，所以不翻譯。
             Msg::Update(note) => self.status = note,
+            // 多媒體鍵走的是控制通道那一套動作，只是不必回話。
+            Msg::Media(control) => {
+                self.control(control);
+            }
         }
+
+        // 每則訊息處理完就讓系統的「播放中」跟上。重複的狀態不會真的送出去。
+        let Self { media, now, .. } = self;
+        media.publish(now.as_ref());
     }
 
     fn handle_audio(&mut self, event: AudioEvent) {

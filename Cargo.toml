@@ -28,6 +28,11 @@ tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "
 unicode-width = "0.2.3"
 zune-jpeg = "0.5.15"
 
+# 多媒體鍵只在 macOS 上接，所以相依也只在 macOS 上宣告：Linux 與 Windows
+# 的建置不會因此多出 libdbus 或 WinRT 這類前提。
+[target.'cfg(target_os = "macos")'.dependencies]
+souvlaki = "0.9.3"
+
 [profile.release]
 lto = true
 codegen-units = 1

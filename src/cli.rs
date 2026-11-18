@@ -10,7 +10,8 @@ pub const HELP: &str = "\
 harioto - a radio in your terminal
 
 Usage:
-  harioto [--theme <name>] [--lang <name>] [--max-minutes N] [--no-update-check]  Start the player
+  harioto [--theme <name>] [--lang <name>] [--max-minutes N] [--no-update-check]
+          [--no-media-keys]                 Start the player
   harioto search <words> [--limit N]         Search YouTube
   harioto radio <video id or url> [--limit N]  Build a radio, seed first
   harioto playlist list                      List playlists
@@ -49,7 +50,22 @@ Options:
   --no-update-check  Skip asking crates.io whether a newer harioto is out. The check
              runs in the background at most once a day; `update_check: false` in the
              theme file turns it off for good
+  --no-media-keys  Leave the keyboard's play, next and previous keys alone, and leave
+             the system's Now Playing entry to whoever else wants it. macOS only so
+             far; `media_keys: false` in the theme file turns it off for good
 ";
+
+/// 走命令列路徑的子指令。主程式要在開畫面之前就知道這次是哪一種，所以這份
+/// 名單和 `dispatch` 共用。
+const COMMANDS: [&str; 10] = [
+    "help", "--help", "-h", "search", "radio", "playlist", "history", "seeds", "ctl", "mcp",
+];
+
+/// 這次呼叫走的是子指令嗎。
+pub fn is_subcommand(args: &[String]) -> bool {
+    args.first()
+        .is_some_and(|first| COMMANDS.contains(&first.as_str()))
+}
 
 /// 找出 `--limit N`，沒給就用預設值。
 fn limit_of(args: &[String], default: usize) -> usize {
@@ -128,6 +144,9 @@ fn fail(message: String, json: bool) -> Result<()> {
 
 /// 處理子指令。回傳 None 代表這次呼叫要進入播放器畫面。
 pub async fn dispatch(args: &[String]) -> Option<Result<()>> {
+    if !is_subcommand(args) {
+        return None;
+    }
     let command = args.first()?.clone();
     let rest: Vec<String> = args[1..].to_vec();
     let json = wants_json(&rest);
@@ -309,5 +328,28 @@ async fn playlist(ops: &[String], json: bool) -> Result<()> {
             }
         }
         other => fail(format!("unknown subcommand: playlist {other}"), json),
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::is_subcommand;
+
+    fn args(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| w.to_string()).collect()
+    }
+
+    #[test]
+    fn a_named_subcommand_is_one() {
+        assert!(is_subcommand(&args(&["search", "satie"])));
+        assert!(is_subcommand(&args(&["ctl", "status"])));
+        assert!(is_subcommand(&args(&["--help"])));
+    }
+
+    #[test]
+    fn starting_the_player_is_not_one() {
+        assert!(!is_subcommand(&args(&[])));
+        assert!(!is_subcommand(&args(&["--theme", "mono"])));
+        assert!(!is_subcommand(&args(&["--selftest", "lofi"])));
     }
 }
