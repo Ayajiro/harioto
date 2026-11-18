@@ -141,6 +141,47 @@ A target that looks like a video id or a YouTube URL is fetched directly; anythi
 
 `index` counts the queue the player built when the radio started, and it climbs on its own as tracks end — leave a player running for an hour and it has moved a dozen places. `harioto radio <id>` asks YouTube again and returns a fresh list whose order need not match that queue, so holding the two side by side says nothing about where the player is. `status` is the only answer to that question.
 
+## Asking for a feeling
+
+People ask for music in feelings, not keywords: *something for the morning that wakes me up without spiking dopamine*. No search box takes that. `search` and `radio` do, in two steps, and since both only read — neither touches a running player — the answer can be checked before a note is heard.
+
+**1. Look for a seed, not a playlist.** A radio is only as good as the track it grows from, so the search is for one track that carries the quality being asked for.
+
+```sh
+harioto search "Brian Eno Music for Airports 1/1" --limit 12 --json
+```
+
+Durations make the first cut. That query returned twelve hits, eight of them past 40 minutes: full albums, time-stretched versions, and one ten-hour loop of the track itself. All of those sit beyond the length check and would never reach a queue, which left the 17:22 single as the candidate.
+
+**2. Read the radio before playing it.** This is the step that turns a recommendation into something checkable.
+
+```sh
+harioto radio LKZ3fGR2SDY --limit 25 --json
+```
+
+The reply is the next hour in order, with durations. Here it held Harold Budd, Stars of the Lid, Hiroshi Yoshimura, Hammock and Nils Frahm, nothing over ten minutes — which answered the request, so it was worth starting. A Mozart concerto tried earlier the same day came back with eleven of twenty entries being one movement under different pianists: a fine recording, useless as background. It was dropped without ever being heard.
+
+**3. Hand the seed to the player already running.**
+
+```sh
+harioto ctl radio LKZ3fGR2SDY
+```
+
+**4. Say what the choice was for.** The reasoning is half the answer, because it is what the next request gets adjusted against.
+
+Three exchanges from one session:
+
+| Asked for | Seed | What made it fit |
+| --- | --- | --- |
+| Nothing that spikes dopamine | Brian Eno — *1/1* | Ambient with no hook, no beat and no build; the level dynamics leave nothing to anticipate |
+| Awake in the morning, still nothing that spikes dopamine | Steve Reich — *Electric Counterpoint: I. Fast* | A steady fast pulse and a bright timbre hold attention, while phase shifting stands in for chorus and climax |
+| Classical andante to work to | Moszkowski — *Piano Concerto Op. 59: II. Andante* | Searching the genre returned multi-hour compilations; seeding one movement returned twenty pieces of movement length |
+
+Two things worth knowing before leaning on this:
+
+- **Genre searches return compilations.** `classical andante` and the like are the titles of two-hour uploads, so the queue fills with items the length check then skips. Seeding a single track is what produces a queue of single tracks.
+- **A Mix exists for music.** YouTube generates `list=RD<videoID>` for songs, not for talks. Ask for a radio from a TED talk and the URL answers with that video alone, so the queue comes back empty and `r` looks broken. For spoken material the search results are the queue, and `--max-minutes` has to make room for their length.
+
 ## Colours
 
 Three presets ship with it — `ember` (the default), `mono`, which paints everything in your terminal's own foreground, and `light`. Pick one with `--theme <name>`.
