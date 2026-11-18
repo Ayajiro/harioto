@@ -1325,6 +1325,28 @@ impl App {
                     "再生エラー：{text}"
                 )
             }
+            AudioEvent::OutputChanged(device) => {
+                // 音訊執行緒已經把這一首停在原處了，這裡只負責讓畫面跟上。
+                if let Some(now) = self.now.as_mut()
+                    && !now.paused
+                {
+                    now.position_ms = now.position_ms();
+                    now.paused = true;
+                }
+                self.status = match device {
+                    Some(device) => tf!(
+                        "輸出改成 {device}，已暫停",
+                        "The output moved to {device}; paused",
+                        "出力が {device} に変わったので一時停止しました"
+                    ),
+                    None => t!(
+                        "輸出裝置換了，已暫停",
+                        "The audio output changed; paused",
+                        "出力デバイスが変わったので一時停止しました"
+                    )
+                    .to_string(),
+                };
+            }
         }
     }
 

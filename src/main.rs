@@ -134,6 +134,9 @@ async fn selftest(query: &str) -> Result<()> {
                     println!("  playback error: {e}");
                     break;
                 }
+                Some(audio::AudioEvent::OutputChanged(device)) => {
+                    println!("  the output moved to {device:?}, so playback is paused");
+                }
                 None => break,
             }
         }
