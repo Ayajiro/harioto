@@ -145,11 +145,11 @@ async fn selftest(query: &str) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let log_path = init_logging();
-
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     // 子指令（search、radio、playlist、history、seeds、mcp）走命令列路徑，不進入畫面。
+    // 這要排在開日誌之前：子指令和播放器共用同一個檔案，而開檔會把內容清掉，
+    // 所以一次 `harioto ctl status` 就會洗掉播放器正在寫的紀錄。
     if let Some(result) = cli::dispatch(&args).await {
         return result;
     }
@@ -175,6 +175,9 @@ async fn main() -> Result<()> {
         let query = args.get(pos + 1).cloned().unwrap_or_else(|| "lofi".into());
         return selftest(&query).await;
     }
+
+    // 從這裡開始就是播放器本身，日誌歸它所有，每次啟動重新開一份。
+    let log_path = init_logging();
 
     // `--theme <名稱>` 覆寫設定檔裡的 preset。
     let theme_preset = args
